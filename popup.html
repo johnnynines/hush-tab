@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Tab Detector</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔊 Audio Tabs</h1>
+      <p class="subtitle">Tabs currently playing audio</p>
+    </header>
+    
+    <main>
+      <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Scanning tabs...</p>
+      </div>
+      
+      <div id="no-audio" class="no-audio" style="display: none;">
+        <div class="icon">🔇</div>
+        <p>No tabs are currently playing audio</p>
+      </div>
+      
+      <div id="tabs-list" class="tabs-list"></div>
+    </main>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

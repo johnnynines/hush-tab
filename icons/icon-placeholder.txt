@@ -1,0 +1,18 @@
+PLACEHOLDER FILE
+
+This directory should contain icon files for the extension:
+- icon16.png (16x16 pixels)
+- icon32.png (32x32 pixels)
+- icon48.png (48x48 pixels)
+- icon128.png (128x128 pixels)
+
+You can create these using any image editor or online icon generator.
+The icons should represent audio/sound (e.g., speaker, sound wave, volume symbol).
+
+Recommended colors:
+- Primary: #667eea (purple-blue)
+- Accent: #764ba2 (purple)
+- Or use a simple speaker/volume icon design
+
+Until you add proper icons, the extension will show a default/missing icon in the browser.
+The extension will still function correctly without custom icons.
