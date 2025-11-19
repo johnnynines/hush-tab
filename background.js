@@ -14,14 +14,21 @@ chrome.runtime.onInstalled.addListener(() => {
 async function scanAllTabs() {
   const tabs = await chrome.tabs.query({});
   tabs.forEach(tab => {
-    if (tab.audible) {
+    // Track tabs that are audible OR have audio but are muted
+    // A tab with mutedInfo.muted = true still has active audio, just silenced
+    const hasAudio = tab.audible || (tab.mutedInfo && tab.mutedInfo.muted);
+    
+    if (hasAudio) {
       audioTabs.set(tab.id, {
         id: tab.id,
         title: tab.title,
         url: tab.url,
-        audible: true,
+        audible: tab.audible,
         mutedInfo: tab.mutedInfo
       });
+    } else {
+      // Remove tabs that no longer have audio
+      audioTabs.delete(tab.id);
     }
   });
   updateBadge();
@@ -29,20 +36,23 @@ async function scanAllTabs() {
 
 // Listen for tab updates (including audio state changes)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Check if audio state changed
-  if (changeInfo.hasOwnProperty('audible')) {
-    if (changeInfo.audible) {
-      // Tab started playing audio
+  // Check if audio state or mute state changed
+  if (changeInfo.hasOwnProperty('audible') || changeInfo.hasOwnProperty('mutedInfo')) {
+    // A tab has audio if it's audible OR if it's muted (muted means audio exists but is silenced)
+    const hasAudio = tab.audible || (tab.mutedInfo && tab.mutedInfo.muted);
+    
+    if (hasAudio) {
+      // Tab has active audio (muted or unmuted)
       audioTabs.set(tabId, {
         id: tab.id,
         title: tab.title,
         url: tab.url,
-        audible: true,
+        audible: tab.audible,
         mutedInfo: tab.mutedInfo
       });
-      console.log(`Audio started in tab ${tabId}: ${tab.title}`);
+      console.log(`Audio detected in tab ${tabId}: ${tab.title} (muted: ${tab.mutedInfo?.muted})`);
     } else {
-      // Tab stopped playing audio
+      // Tab no longer has any audio activity
       audioTabs.delete(tabId);
       console.log(`Audio stopped in tab ${tabId}`);
     }
@@ -56,15 +66,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       ...tabInfo,
       title: changeInfo.title || tabInfo.title,
       url: changeInfo.url || tabInfo.url
-    });
-  }
-  
-  // Update muted state
-  if (changeInfo.mutedInfo && audioTabs.has(tabId)) {
-    const tabInfo = audioTabs.get(tabId);
-    audioTabs.set(tabId, {
-      ...tabInfo,
-      mutedInfo: changeInfo.mutedInfo
     });
   }
 });

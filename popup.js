@@ -45,11 +45,23 @@ function displayTabs(tabs) {
 // Create a tab item element
 function createTabItem(tab) {
   const item = document.createElement('div');
-  item.className = 'tab-item';
+  const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
+  
+  // Add different styling for muted vs unmuted tabs
+  item.className = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
   
   // Tab info section
   const info = document.createElement('div');
   info.className = 'tab-info';
+  
+  // Status indicator
+  const statusIndicator = document.createElement('div');
+  statusIndicator.className = 'status-indicator';
+  statusIndicator.innerHTML = isMuted ? '🔇' : '🔊';
+  statusIndicator.title = isMuted ? 'Muted (has audio)' : 'Playing audio';
+  
+  const textContainer = document.createElement('div');
+  textContainer.className = 'tab-text';
   
   const title = document.createElement('div');
   title.className = 'tab-title';
@@ -65,8 +77,18 @@ function createTabItem(tab) {
     url.textContent = tab.url;
   }
   
-  info.appendChild(title);
-  info.appendChild(url);
+  // Add muted label if tab is muted
+  if (isMuted) {
+    const mutedLabel = document.createElement('span');
+    mutedLabel.className = 'muted-label';
+    mutedLabel.textContent = ' (muted)';
+    url.appendChild(mutedLabel);
+  }
+  
+  textContainer.appendChild(title);
+  textContainer.appendChild(url);
+  info.appendChild(statusIndicator);
+  info.appendChild(textContainer);
   
   // Controls section
   const controls = document.createElement('div');
@@ -75,9 +97,8 @@ function createTabItem(tab) {
   // Mute/Unmute button
   const muteBtn = document.createElement('button');
   muteBtn.className = 'control-btn';
-  const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
-  muteBtn.innerHTML = isMuted ? '🔇' : '🔊';
-  muteBtn.title = isMuted ? 'Unmute' : 'Mute';
+  muteBtn.innerHTML = isMuted ? '�' : '�';
+  muteBtn.title = isMuted ? 'Unmute this tab' : 'Mute this tab';
   muteBtn.onclick = () => toggleMute(tab.id, isMuted, muteBtn);
   
   // Focus button
