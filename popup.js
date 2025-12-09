@@ -2,8 +2,43 @@
 // Displays tabs playing audio and allows control
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadAutoMuteSettings();
   await loadAudioTabs();
+  setupEventListeners();
 });
+
+// Load auto-mute settings
+async function loadAutoMuteSettings() {
+  try {
+    const response = await chrome.runtime.sendMessage({ action: 'getAutoMuteSettings' });
+    const toggle = document.getElementById('auto-mute-toggle');
+    toggle.checked = response.autoMuteAds !== false;
+  } catch (error) {
+    console.error('Error loading auto-mute settings:', error);
+  }
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  const toggle = document.getElementById('auto-mute-toggle');
+  toggle.addEventListener('change', async (e) => {
+    try {
+      await chrome.runtime.sendMessage({ 
+        action: 'setAutoMuteSettings', 
+        enabled: e.target.checked 
+      });
+      
+      // Visual feedback
+      const settingsBar = document.querySelector('.settings-bar');
+      settingsBar.style.opacity = '0.7';
+      setTimeout(() => {
+        settingsBar.style.opacity = '1';
+      }, 150);
+    } catch (error) {
+      console.error('Error saving auto-mute settings:', error);
+    }
+  });
+}
 
 // Load and display tabs with audio
 async function loadAudioTabs() {

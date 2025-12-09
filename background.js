@@ -4,9 +4,21 @@
 // Store tabs with audio state
 let audioTabs = new Map();
 
+// Store auto-mute state per tab (tracks if we auto-muted due to ad)
+let autoMutedTabs = new Set();
+
 // Initialize when extension is installed/updated
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Audio Tab Detector initialized');
+  
+  // Set default auto-mute preference
+  chrome.storage.sync.get(['autoMuteAds'], (result) => {
+    if (result.autoMuteAds === undefined) {
+      chrome.storage.sync.set({ autoMuteAds: true });
+      console.log('Auto-mute ads enabled by default');
+    }
+  });
+  
   scanAllTabs();
 });
 
@@ -127,6 +139,70 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+  
+  // Handle ad state changes from content scripts
+  if (request.action === 'adStateChanged') {
+    handleAdStateChange(sender.tab.id, request.isAd);
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  // Get auto-mute settings
+  if (request.action === 'getAutoMuteSettings') {
+    chrome.storage.sync.get(['autoMuteAds'], (result) => {
+      sendResponse({ autoMuteAds: result.autoMuteAds !== false });
+    });
+    return true;
+  }
+  
+  // Set auto-mute settings
+  if (request.action === 'setAutoMuteSettings') {
+    chrome.storage.sync.set({ autoMuteAds: request.enabled }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+});
+
+// Handle ad state changes from content scripts
+async function handleAdStateChange(tabId, isAd) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    
+    // Check if auto-mute is enabled
+    const settings = await chrome.storage.sync.get(['autoMuteAds']);
+    const autoMuteEnabled = settings.autoMuteAds !== false;
+    
+    if (!autoMuteEnabled) {
+      console.log(`[Hush Tab] Auto-mute disabled, ignoring ad state for tab ${tabId}`);
+      return;
+    }
+    
+    if (isAd) {
+      // Ad started - mute the tab if not already muted
+      if (!tab.mutedInfo.muted) {
+        console.log(`[Hush Tab] Ad detected in tab ${tabId}, auto-muting`);
+        await chrome.tabs.update(tabId, { muted: true });
+        autoMutedTabs.add(tabId);
+      }
+    } else {
+      // Content resumed - unmute only if we auto-muted it
+      if (autoMutedTabs.has(tabId)) {
+        console.log(`[Hush Tab] Content resumed in tab ${tabId}, auto-unmuting`);
+        await chrome.tabs.update(tabId, { muted: false });
+        autoMutedTabs.delete(tabId);
+      } else {
+        console.log(`[Hush Tab] Content resumed in tab ${tabId}, but was not auto-muted (user may have manually muted)`);
+      }
+    }
+  } catch (error) {
+    console.error(`[Hush Tab] Error handling ad state change for tab ${tabId}:`, error);
+  }
+}
+
+// Clean up auto-mute tracking when tabs are closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  autoMutedTabs.delete(tabId);
 });
 
 // Periodic scan to ensure we don't miss any tabs (fallback)

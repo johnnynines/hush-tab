@@ -1,13 +1,15 @@
-# Audio Tab Detector Browser Extension
+# Hush Tab - Smart Audio Tab Manager
 
-A cross-browser extension for Firefox and Chrome that detects and manages tabs playing audio. This extension provides real-time monitoring of audio playback across all your tabs with an intuitive interface to control them.
+A cross-browser extension for Firefox and Chrome that detects and manages tabs playing audio. Features intelligent YouTube ad detection that automatically mutes commercials while keeping your content playing.
 
 ## Features
 
 🔊 **Real-time Audio Detection** - Automatically detects when tabs start or stop playing audio  
 🎯 **Visual Badge Counter** - Shows the number of tabs playing audio on the extension icon  
+🤖 **Smart YouTube Ad Muting** - Automatically mutes YouTube ads and unmutes when content resumes  
 🔇 **Quick Mute/Unmute** - Control audio for each tab individually  
 👁️ **Instant Tab Switching** - Click to jump directly to any tab playing audio  
+⚙️ **Configurable Settings** - Toggle auto-mute on/off with one click  
 ⚡ **Lightweight & Fast** - Minimal resource usage with efficient background monitoring  
 🌐 **Cross-Browser Compatible** - Works on both Firefox and Chrome (Manifest V3)
 
@@ -44,24 +46,34 @@ A cross-browser extension for Firefox and Chrome that detects and manages tabs p
 
 ### Architecture
 
-The extension consists of three main components:
+The extension consists of four main components:
 
 1. **Background Service Worker** (`background.js`)
    - Monitors all tabs using the `chrome.tabs` API
    - Tracks audio state changes via the `audible` property
    - Maintains a map of currently playing tabs
+   - Coordinates auto-mute actions based on ad detection
    - Updates the badge counter in real-time
 
-2. **Popup Interface** (`popup.html` + `popup.js`)
+2. **YouTube Content Script** (`content-youtube.js`) 🆕
+   - Injects into YouTube pages to detect ads
+   - Uses multiple detection methods (DOM monitoring, MutationObserver)
+   - Identifies ad elements: `.ytp-ad-player-overlay`, skip buttons, ad indicators
+   - Sends real-time ad state changes to background script
+   - Works across YouTube's SPA navigation
+
+3. **Popup Interface** (`popup.html` + `popup.js`)
    - Displays all tabs currently playing audio
    - Provides mute/unmute controls
    - Allows quick switching between tabs
+   - Toggle for enabling/disabling auto-mute feature
    - Updates dynamically when tab states change
 
-3. **Manifest Configuration** (`manifest.json`)
-   - Declares required permissions (`tabs`, `storage`)
-   - Configures cross-browser compatibility
-   - Defines the extension metadata
+4. **Manifest Configuration** (`manifest.json`)
+   - Declares required permissions (`tabs`, `storage`, `scripting`)
+   - Configures content script injection for YouTube
+   - Defines cross-browser compatibility
+   - Sets up host permissions for YouTube access
 
 ### Key APIs Used
 
@@ -70,6 +82,34 @@ The extension consists of three main components:
 - **`tab.audible`** - Boolean property indicating if a tab is playing audio
 - **`chrome.tabs.update()`** - Controls tab state (mute/unmute, focus)
 - **`chrome.action.setBadgeText()`** - Updates the extension icon badge
+- **`chrome.storage.sync`** - Stores user preferences (auto-mute setting)
+- **`MutationObserver`** - Monitors YouTube DOM for ad-related changes
+- **`chrome.runtime.onMessage`** - Communication between content scripts and background
+
+### YouTube Ad Detection
+
+The extension uses multiple detection strategies for high accuracy:
+
+1. **DOM Element Detection** - Looks for ad-specific elements:
+   - `.ytp-ad-player-overlay` - Ad overlay container
+   - `.ytp-ad-skip-button` - Skip ad button
+   - `.ytp-ad-text` - Ad text indicator
+   - `.ad-showing` - Player class during ads
+
+2. **MutationObserver** - Real-time monitoring:
+   - Watches for ad element insertion/removal
+   - Detects class changes on video player
+   - Immediate response to ad state changes
+
+3. **Polling Fallback** - Checks every 500ms:
+   - Ensures no ads are missed
+   - Handles edge cases where observers don't fire
+
+**Auto-Mute Behavior:**
+- When ad detected → Tab muted automatically
+- When content resumes → Tab unmuted (only if we muted it)
+- Respects manual user muting (won't auto-unmute)
+- Can be toggled on/off in popup
 
 ## Development
 
@@ -79,11 +119,13 @@ The extension consists of three main components:
 mute_ads/
 ├── manifest.json          # Extension configuration
 ├── background.js          # Background service worker
+├── content-youtube.js     # YouTube ad detection script 🆕
 ├── popup.html            # Popup UI structure
 ├── popup.js              # Popup logic
 ├── popup.css             # Popup styling
 ├── icons/                # Extension icons (16, 32, 48, 128px)
 │   └── icon-placeholder.txt
+├── LICENSE               # GNU GPLv3
 └── README.md             # This file
 ```
 
@@ -108,16 +150,24 @@ You can create these using any image editor or icon generator. Recommended tools
    - Play audio and verify the extension badge updates
    - Check that the tab appears in the popup
 
-2. **Test Mute Controls:**
+2. **Test YouTube Ad Auto-Mute:** 🆕
+   - Open a YouTube video with ads
+   - Ensure auto-mute toggle is ON in popup
+   - Play the video and wait for an ad
+   - Verify tab mutes automatically when ad starts
+   - Verify tab unmutes when content resumes
+   - Test with toggle OFF - should not auto-mute
+
+3. **Test Mute Controls:**
    - Click the mute button in the popup
    - Verify audio stops and the icon changes
    - Test unmuting
 
-3. **Test Tab Switching:**
+4. **Test Tab Switching:**
    - Click the focus button or tab info
    - Verify you're switched to the correct tab
 
-4. **Test Multiple Tabs:**
+5. **Test Multiple Tabs:**
    - Play audio in several tabs simultaneously
    - Verify all appear in the list
    - Test controlling each independently
@@ -127,11 +177,13 @@ You can create these using any image editor or icon generator. Recommended tools
 **Chrome DevTools:**
 - Background script: Go to `chrome://extensions/` → Find your extension → Click "service worker"
 - Popup: Right-click the extension icon → Inspect popup
+- Content script: Open YouTube → F12 → Console → Look for `[Hush Tab]` logs
 
 **Firefox DevTools:**
 - Go to `about:debugging#/runtime/this-firefox`
 - Click "Inspect" on your extension
 - Use the console to view background script logs
+- Content script logs appear in page console
 
 ### Common Issues
 
@@ -149,17 +201,26 @@ You can create these using any image editor or icon generator. Recommended tools
 - Manifest V3 requires Firefox 109+
 - Some APIs may have slight differences from Chrome
 
-## Customization Ideas
+**YouTube ad detection not working:**
+- Check console for `[Hush Tab]` messages
+- Verify content script is injecting (check Sources tab in DevTools)
+- YouTube may update their DOM - ad selectors may need updating
+- Try disabling/re-enabling the extension
+
+## Future Enhancement Ideas
 
 Here are some ways you could extend this extension:
 
-1. **Auto-mute on detection** - Automatically mute tabs when they start playing audio
-2. **Whitelist/blacklist** - Allow audio from specific domains only
-3. **Keyboard shortcuts** - Add hotkeys for muting/unmuting
-4. **Audio visualization** - Show volume levels or waveforms
-5. **History tracking** - Keep a log of which tabs played audio
-6. **Smart notifications** - Alert when audio starts in background tabs
-7. **Bulk controls** - Mute/unmute all tabs at once
+1. ✅ **Auto-mute YouTube ads** - IMPLEMENTED!
+2. **More platforms** - Add ad detection for Hulu, Twitch, Spotify
+3. **Audio analysis** - Use Web Audio API for non-YouTube ad detection
+4. **Whitelist/blacklist** - Allow audio from specific domains only
+5. **Keyboard shortcuts** - Add hotkeys for muting/unmuting
+6. **Audio visualization** - Show volume levels or waveforms
+7. **History tracking** - Keep a log of which tabs played audio
+8. **Smart notifications** - Alert when audio starts in background tabs
+9. **Bulk controls** - Mute/unmute all tabs at once
+10. **Machine learning** - Train models to detect ads by audio patterns
 
 ## Browser Compatibility
 
@@ -169,6 +230,7 @@ Here are some ways you could extend this extension:
 | Badge counter | ✅ | ✅ | ✅ | ✅ |
 | Mute/unmute | ✅ | ✅ | ✅ | ✅ |
 | Tab switching | ✅ | ✅ | ✅ | ✅ |
+| YouTube ad muting | ✅ | ✅ | ✅ | ✅ |
 
 **Minimum versions:**
 - Chrome 88+
@@ -179,7 +241,9 @@ Here are some ways you could extend this extension:
 ## Permissions Explained
 
 - **`tabs`** - Required to access tab information including audio state, title, and URL
-- **`storage`** - Reserved for future features (not currently used, but good to have)
+- **`storage`** - Stores user preferences (auto-mute setting)
+- **`scripting`** - Required for content script injection
+- **`host_permissions`** - Access to YouTube.com for ad detection
 
 ## Contributing
 
