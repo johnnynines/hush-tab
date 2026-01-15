@@ -2,7 +2,7 @@
 
 ## What This Feature Does
 
-The YouTube auto-mute feature automatically detects and mutes advertisements on YouTube, then unmutes your tab when the actual content resumes. No more jarring ad interruptions!
+The YouTube auto-mute feature automatically detects and mutes advertisements on YouTube, then unmutes your tab when the actual content resumes.
 
 ## How to Use
 
