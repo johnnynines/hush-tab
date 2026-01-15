@@ -59,10 +59,12 @@ Popup UI (popup.js/popup.html)
 **Core Responsibilities:**
 - Maintains `audioTabs` Map tracking all tabs with audio (both audible and muted)
 - Maintains `autoMutedTabs` Set to track which tabs were auto-muted (critical for knowing when to auto-unmute)
+- Maintains `audibleStateHistory` Map for detecting audio state "flickers" (potential ad transitions)
 - Listens to `chrome.tabs.onUpdated` for `audible` and `mutedInfo` changes
 - Updates badge counter showing number of tabs with audio
 - Handles messages from content scripts and popup
 - Executes auto-mute/unmute logic based on ad state from content scripts
+- Notifies content scripts when audible flicker patterns are detected
 
 **Key State Management:**
 - A tab is considered to "have audio" if `tab.audible === true` OR `tab.mutedInfo.muted === true`
@@ -80,19 +82,42 @@ Popup UI (popup.js/popup.html)
 
 **Core Responsibilities:**
 - Injects into all YouTube pages (`*://*.youtube.com/*`)
-- Detects ad state using multiple detection methods
+- Detects ad state using confidence-based scoring with multiple signals
 - Sends real-time ad state changes to background script
 - Handles YouTube's SPA navigation (URL changes without page reload)
+- Implements hysteresis logic to prevent rapid mute/unmute cycling
 
-**Ad Detection Strategy (Multi-layered):**
-1. DOM element detection: `.ytp-ad-player-overlay`, `.ytp-ad-skip-button`, `.ytp-ad-text`
-2. Player class monitoring: `.ad-showing`, `.ad-interrupting`
-3. Video ads module: `.video-ads.ytp-ad-module`
-4. MutationObserver for immediate detection of DOM changes
-5. Polling fallback every 500ms for edge cases
+**Confidence-Based Ad Detection:**
 
-**Why Multiple Methods:**
-YouTube's DOM structure can vary and change over time. Using multiple detection methods ensures high accuracy and resilience to YouTube updates.
+Instead of boolean detection, the script calculates a confidence score (0-100) by combining multiple weighted signals:
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| `.ad-showing` class | 40 | Player class during ads (most reliable) |
+| `.ad-interrupting` class | 40 | Player class for interrupting ads |
+| `.ytp-ad-module` has children | 35 | Primary ad container check |
+| `.ytp-ad-player-overlay` | 30 | Ad overlay present |
+| `.ytp-ad-preview-text` | 25 | Shows "Ad will end in X" |
+| Ad counter text | 25 | "Ad 1 of 2" pattern detected |
+| `.ytp-ad-badge` | 25 | Ad badge/label visible |
+| `.ytp-ad-message-container` | 20 | Ad messaging visible |
+| `.ytp-ad-overlay-container` | 20 | Overlay container present |
+| Instream info | 20 | Ad info in player overlay |
+| `.ytp-ad-text` | 15 | Generic ad text element |
+| Skip button | 15 | Lower weight (appears late) |
+| Video time anomaly | 15 | currentTime not advancing |
+| Audible flicker | 10 | Audio state changes detected |
+
+**Hysteresis Logic:**
+- Mute when confidence >= 50
+- Unmute only when confidence < 20 for 2+ seconds
+- This prevents rapid mute/unmute flapping during transitions
+
+**Why Confidence Scoring:**
+- More resilient to YouTube DOM changes (multiple weak signals > one strong signal)
+- Reduces false positives and negatives
+- Skip button has low weight since it appears late or not at all
+- Allows easy tuning of detection sensitivity
 
 ### 3. Popup Interface (`popup.html`, `popup.js`, `popup.css`)
 
@@ -141,7 +166,7 @@ The `autoMutedTabs` Set prevents unmuting tabs that the user manually muted. Wit
 
 ### YouTube SPA Navigation Handling
 
-YouTube is a Single Page Application that changes URLs without full page reloads. The content script handles this by:
+YouTube is a Single Page Application that changes URLs without full page reloads. The content script handles this by resetting all detection state:
 
 ```javascript
 let lastUrl = location.href;
@@ -149,7 +174,12 @@ new MutationObserver(() => {
   const url = location.href;
   if (url !== lastUrl) {
     lastUrl = url;
-    isAdPlaying = false; // Reset state
+    // Reset all state on navigation
+    currentAdState = false;
+    lowConfidenceStartTime = null;
+    lastVideoTime = 0;
+    videoTimeStalled = false;
+    recentAudibleFlicker = false;
     checkForAds();
   }
 }).observe(document, { subtree: true, childList: true });
@@ -178,9 +208,18 @@ If YouTube updates their DOM and ads aren't detected:
 
 1. Open YouTube with DevTools (F12)
 2. Inspect ad elements to find new selectors
-3. Add to `isYouTubeAdPlaying()` in `content-youtube.js`
-4. Test with both pre-roll and mid-roll ads
-5. Verify MutationObserver catches the new elements
+3. Add a new weight in the `WEIGHTS` object in `content-youtube.js`
+4. Add the detection logic in `getAdConfidence()` function
+5. Add the selector to the MutationObserver in `observeDOMChanges()` if needed
+6. Test with both pre-roll and mid-roll ads
+7. Tune the weight based on reliability (higher = more reliable signal)
+
+**Confidence Tuning Tips:**
+- High-reliability signals (player classes): 35-40 weight
+- Medium-reliability signals (ad containers): 20-30 weight
+- Low-reliability signals (may have false positives): 10-15 weight
+- Adjust `CONFIG.MUTE_THRESHOLD` (default: 50) if too sensitive/insensitive
+- Adjust `CONFIG.UNMUTE_THRESHOLD` (default: 20) and `CONFIG.UNMUTE_DELAY_MS` (default: 2000) for unmute behavior
 
 ### Extending to Other Platforms (e.g., Twitch, Spotify)
 
@@ -221,12 +260,17 @@ When making changes, verify:
 4. YouTube ad detection:
    - Toggle auto-mute ON
    - Play video with ads
-   - Verify auto-mute when ad starts
-   - Verify auto-unmute when content resumes
+   - Verify auto-mute when ad starts (check console for confidence score)
+   - Verify auto-unmute when content resumes (after 2 second delay)
    - Toggle OFF and verify no auto-mute
 5. Manual vs auto-mute: Manually mute a tab, verify it doesn't auto-unmute
 6. Multiple tabs: Play audio in several tabs, verify all tracked correctly
 7. YouTube navigation: Navigate between videos, verify state resets properly
+8. Confidence scoring: Open DevTools console, look for `[Hush Tab] Confidence:` logs
+   - Verify multiple signals are detected during ads
+   - Verify confidence drops to near 0 when content plays
+9. Hysteresis: Verify no rapid mute/unmute cycling during ad transitions
+10. Unskippable ads: Verify detection works even without skip button (skip button has low weight)
 
 ## Storage Structure
 
