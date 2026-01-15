@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Audio Tab Detector",
+  "name": "Hush Tab Audio Detector",
   "version": "1.0.0",
-  "description": "Detects and manages tabs playing audio",
+  "description": "Detects and manages browser tabs playing audio",
   "permissions": [
     "tabs",
     "storage",
