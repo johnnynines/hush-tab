@@ -1,15 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Hush Tab Audio Detector",
-  "version": "1.0.0",
-  "description": "Detects and manages browser tabs playing audio",
+  "version": "1.1.0",
+  "description": "Detects and manages browser tabs playing audio with intelligent ad detection for YouTube, Hulu, and ESPN",
   "permissions": [
     "tabs",
     "storage",
     "scripting"
   ],
   "host_permissions": [
-    "*://*.youtube.com/*"
+    "*://*.youtube.com/*",
+    "*://*.hulu.com/*",
+    "*://*.espn.com/*",
+    "*://plus.espn.com/*",
+    "*://watch.espn.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -19,6 +23,16 @@
     {
       "matches": ["*://*.youtube.com/*"],
       "js": ["content-youtube.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.hulu.com/*"],
+      "js": ["content-hulu.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.espn.com/*", "*://plus.espn.com/*", "*://watch.espn.com/*"],
+      "js": ["content-espn.js"],
       "run_at": "document_end"
     }
   ],

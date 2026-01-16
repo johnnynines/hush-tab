@@ -122,11 +122,15 @@ function trackAudibleStateChange(tabId, audible, url) {
   // Check if we have a "flicker" pattern (multiple changes in short window)
   const hasFlicker = history.changes.length >= AUDIBLE_CONFIG.FLICKER_THRESHOLD;
 
-  // Only notify if we haven't notified recently and this is a YouTube tab
+  // Only notify if we haven't notified recently and this is a supported streaming tab
   const canNotify = now - history.lastNotified > AUDIBLE_CONFIG.NOTIFY_COOLDOWN_MS;
-  const isYouTube = url && url.includes('youtube.com');
+  const isSupportedSite = url && (
+    url.includes('youtube.com') ||
+    url.includes('hulu.com') ||
+    url.includes('espn.com')
+  );
 
-  if (hasFlicker && canNotify && isYouTube) {
+  if (hasFlicker && canNotify && isSupportedSite) {
     history.lastNotified = now;
     console.log(`[Hush Tab] Audible flicker detected in tab ${tabId} (${history.changes.length} changes in ${AUDIBLE_CONFIG.HISTORY_WINDOW_MS}ms)`);
 

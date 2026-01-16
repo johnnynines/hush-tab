@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Hush Tab is a cross-browser extension (Firefox/Chrome) that detects and manages tabs playing audio with intelligent YouTube ad detection and auto-muting capabilities. The extension uses Manifest V3 for modern browser compatibility.
+Hush Tab is a cross-browser extension (Firefox/Chrome) that detects and manages tabs playing audio with intelligent ad detection and auto-muting capabilities for multiple streaming platforms. The extension uses Manifest V3 for modern browser compatibility.
+
+**Supported Platforms:**
+- YouTube (`youtube.com`)
+- Hulu (`hulu.com`)
+- ESPN (`espn.com`, `plus.espn.com`, `watch.espn.com`)
 
 ## Development Commands
 
@@ -34,8 +39,9 @@ web-ext run
 - Chrome: `chrome://extensions/` → Find extension → Click "service worker"
 - Firefox: `about:debugging#/runtime/this-firefox` → Click "Inspect"
 
-**Content Script (YouTube):**
-- Open YouTube page → F12 → Console → Look for `[Hush Tab]` logs
+**Content Scripts (YouTube, Hulu, ESPN):**
+- Open any supported streaming page → F12 → Console → Look for `[Hush Tab]` logs
+- Each platform shows confidence scores: `[Hush Tab] Confidence: XX | Signals: ...`
 
 **Popup:**
 - Right-click extension icon → "Inspect popup"
@@ -45,12 +51,15 @@ web-ext run
 ### Component Interaction Flow
 
 ```
-YouTube Page (content-youtube.js)
-    ↓ chrome.runtime.sendMessage()
+Streaming Page (content-youtube.js / content-hulu.js / content-espn.js)
+    ↓ chrome.runtime.sendMessage({action: 'adStateChanged'})
 Background Script (background.js)
-    ↓ chrome.tabs.update()
+    ↓ chrome.tabs.update({muted: true/false})
 Tab Mute/Unmute
-    ↓ chrome.tabs.onUpdated
+    ↓ chrome.tabs.onUpdated (audible flicker detection)
+    ↓ chrome.tabs.sendMessage({action: 'audibleStateChanged'})
+Content Scripts (additional confidence signal)
+    ↓
 Popup UI (popup.js/popup.html)
 ```
 
@@ -119,7 +128,48 @@ Instead of boolean detection, the script calculates a confidence score (0-100) b
 - Skip button has low weight since it appears late or not at all
 - Allows easy tuning of detection sensitivity
 
-### 3. Popup Interface (`popup.html`, `popup.js`, `popup.css`)
+### 3. Hulu Content Script (`content-hulu.js`)
+
+**Core Responsibilities:**
+- Injects into all Hulu pages (`*://*.hulu.com/*`)
+- Uses same confidence-based scoring system as YouTube
+- Handles Hulu's SPA navigation
+
+**Hulu-Specific Detection Signals:**
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| Ad countdown text | 45 | "Your video will resume" or countdown |
+| Ad break marker | 40 | `.controls__ad-break` on progress bar |
+| Player ad state | 40 | Player class indicates ad mode |
+| Ad overlay visible | 35 | Ad overlay/container present |
+| Ad badge text | 30 | "Ad" or "Advertisement" label |
+| Video time frozen | 20 | currentTime not advancing |
+| Controls disabled | 15 | Seek bar disabled during ad |
+| Audible flicker | 10 | Audio state changes detected |
+
+### 4. ESPN Content Script (`content-espn.js`)
+
+**Core Responsibilities:**
+- Injects into ESPN pages (`*://*.espn.com/*`, `*://plus.espn.com/*`, `*://watch.espn.com/*`)
+- Uses same confidence-based scoring system
+- Includes IMA SDK detection (Google Interactive Media Ads)
+
+**ESPN-Specific Detection Signals:**
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| ESPN API ad state | 45 | Legacy `espn.video.player.adPlaying` |
+| Ad overlay visible | 40 | Ad container/overlay present |
+| Ad countdown text | 40 | "Ad X of Y" or countdown text |
+| Ad break indicator | 35 | Ad break marker in UI |
+| IMA SDK container | 35 | Google IMA ad elements |
+| Ad badge visible | 30 | "Ad" or "Commercial" badge |
+| Video time frozen | 20 | currentTime not advancing |
+| Seek disabled | 20 | Seek bar disabled during ad |
+| Audible flicker | 10 | Audio state changes detected |
+
+### 5. Popup Interface (`popup.html`, `popup.js`, `popup.css`)
 
 **Core Responsibilities:**
 - Displays all tabs currently playing audio (both muted and unmuted)
@@ -133,13 +183,13 @@ Instead of boolean detection, the script calculates a confidence score (0-100) b
 - Shows "No tabs playing audio" when list is empty
 - Reflects real-time mute state changes
 
-### 4. Manifest Configuration (`manifest.json`)
+### 6. Manifest Configuration (`manifest.json`)
 
 **Critical Permissions:**
 - `tabs`: Required to access audio state, title, URL
 - `storage`: Persists auto-mute preference via `chrome.storage.sync`
 - `scripting`: Enables content script injection
-- `host_permissions`: `*://*.youtube.com/*` for ad detection
+- `host_permissions`: YouTube, Hulu, and ESPN domains for ad detection
 
 **Browser-Specific Settings:**
 - `browser_specific_settings.gecko`: Firefox compatibility (min version 109.0)
@@ -223,11 +273,18 @@ If YouTube updates their DOM and ads aren't detected:
 
 ### Extending to Other Platforms (e.g., Twitch, Spotify)
 
+See `content-hulu.js` and `content-espn.js` for examples. Steps:
+
 1. Create new content script file (e.g., `content-twitch.js`)
-2. Add to `manifest.json` content_scripts with appropriate URL matches
-3. Implement platform-specific ad detection
-4. Send same `adStateChanged` message format to background script
-5. Background script logic works universally (no changes needed)
+2. Copy the confidence-based detection structure from an existing script
+3. Research platform-specific ad selectors using DevTools
+4. Implement `getAdConfidence()` with platform-specific signals
+5. Add to `manifest.json`:
+   - `host_permissions`: Add the domain pattern
+   - `content_scripts`: Add new entry with matches and js file
+6. Update `background.js` `isSupportedSite` check for audible flicker detection
+7. Send same `adStateChanged` message format to background script
+8. Test with actual ads on the platform
 
 ### Adding Keyboard Shortcuts
 
@@ -254,23 +311,31 @@ If YouTube updates their DOM and ads aren't detected:
 
 When making changes, verify:
 
-1. Audio detection: Open tabs with YouTube, Spotify, etc. Badge updates correctly
+1. Audio detection: Open tabs with YouTube, Hulu, ESPN, etc. Badge updates correctly
 2. Mute controls: Popup buttons mute/unmute tabs correctly
 3. Tab switching: Clicking tab info switches to correct tab
-4. YouTube ad detection:
+4. **YouTube ad detection:**
    - Toggle auto-mute ON
    - Play video with ads
    - Verify auto-mute when ad starts (check console for confidence score)
    - Verify auto-unmute when content resumes (after 2 second delay)
    - Toggle OFF and verify no auto-mute
-5. Manual vs auto-mute: Manually mute a tab, verify it doesn't auto-unmute
-6. Multiple tabs: Play audio in several tabs, verify all tracked correctly
-7. YouTube navigation: Navigate between videos, verify state resets properly
-8. Confidence scoring: Open DevTools console, look for `[Hush Tab] Confidence:` logs
-   - Verify multiple signals are detected during ads
-   - Verify confidence drops to near 0 when content plays
-9. Hysteresis: Verify no rapid mute/unmute cycling during ad transitions
-10. Unskippable ads: Verify detection works even without skip button (skip button has low weight)
+5. **Hulu ad detection:**
+   - Play content with ad breaks
+   - Verify muting during "Your video will resume" messages
+   - Check for `[Hush Tab] Hulu Confidence:` logs in console
+6. **ESPN ad detection:**
+   - Play ESPN+ or watch.espn.com content
+   - Verify muting during commercial breaks
+   - Check for `[Hush Tab] ESPN Confidence:` logs in console
+7. Manual vs auto-mute: Manually mute a tab, verify it doesn't auto-unmute
+8. Multiple tabs: Play audio in several tabs, verify all tracked correctly
+9. Navigation: Navigate between videos on each platform, verify state resets properly
+10. Confidence scoring: Open DevTools console, look for `[Hush Tab] Confidence:` logs
+    - Verify multiple signals are detected during ads
+    - Verify confidence drops to near 0 when content plays
+11. Hysteresis: Verify no rapid mute/unmute cycling during ad transitions
+12. Unskippable ads: Verify detection works even without skip button (skip button has low weight)
 
 ## Storage Structure
 
