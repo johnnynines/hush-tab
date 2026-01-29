@@ -23,11 +23,11 @@ function setupEventListeners() {
   const toggle = document.getElementById('auto-mute-toggle');
   toggle.addEventListener('change', async (e) => {
     try {
-      await chrome.runtime.sendMessage({ 
-        action: 'setAutoMuteSettings', 
-        enabled: e.target.checked 
+      await chrome.runtime.sendMessage({
+        action: 'setAutoMuteSettings',
+        enabled: e.target.checked
       });
-      
+
       // Visual feedback
       const settingsBar = document.querySelector('.settings-bar');
       settingsBar.style.opacity = '0.7';
@@ -38,6 +38,15 @@ function setupEventListeners() {
       console.error('Error saving auto-mute settings:', error);
     }
   });
+
+  // Diagnostic tool link - open in new tab
+  const diagnosticLink = document.getElementById('open-diagnostic');
+  if (diagnosticLink) {
+    diagnosticLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: chrome.runtime.getURL('diagnostic.html') });
+    });
+  }
 }
 
 // Load and display tabs with audio

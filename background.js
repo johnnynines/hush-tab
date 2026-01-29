@@ -17,6 +17,39 @@ const AUDIBLE_CONFIG = {
   NOTIFY_COOLDOWN_MS: 3000,     // Don't notify more often than this
 };
 
+// Network-based ad detection configuration
+const AD_NETWORK_CONFIG = {
+  // Known ad server domain patterns
+  AD_DOMAINS: [
+    'doubleclick.net',
+    'googlesyndication.com',
+    'googleadservices.com',
+    'moatads.com',
+    '2mdn.net',
+    'adskeeper.com',
+    'adservice.google.com',
+    'imasdk.googleapis.com',
+    'pubads.g.doubleclick.net',
+    'securepubads.g.doubleclick.net',
+    'ad.doubleclick.net',
+    'ads.espn.com',
+    'ads.hulu.com',
+    'ads.youtube.com',
+    'fwmrm.net',           // FreeWheel ad server (used by many broadcasters)
+    'uplynk.com',          // Verizon ad platform
+    'innovid.com',         // Video ad platform
+    'spotxchange.com',     // SpotX ads
+    'springserve.com',     // Ad server
+  ],
+  // How long to consider ad "active" after last ad request (ms)
+  AD_ACTIVITY_TIMEOUT_MS: 10000,
+  // Minimum requests to consider an ad is playing
+  MIN_AD_REQUESTS: 2,
+};
+
+// Track ad network activity per tab
+let adNetworkActivity = new Map(); // tabId -> { lastAdRequest: timestamp, requestCount: number, isAdActive: boolean }
+
 // Initialize when extension is installed/updated
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Audio Tab Detector initialized');
@@ -30,7 +63,122 @@ chrome.runtime.onInstalled.addListener(() => {
   });
   
   scanAllTabs();
+  setupNetworkAdDetection();
 });
+
+// Setup network-based ad detection
+function setupNetworkAdDetection() {
+  console.log('[Hush Tab] Setting up network-based ad detection');
+
+  // Listen for web requests to ad servers
+  chrome.webRequest.onBeforeRequest.addListener(
+    handleAdNetworkRequest,
+    {
+      urls: [
+        "*://*.doubleclick.net/*",
+        "*://*.googlesyndication.com/*",
+        "*://*.googleadservices.com/*",
+        "*://*.moatads.com/*",
+        "*://*.2mdn.net/*",
+        "*://*.imasdk.googleapis.com/*",
+        "*://*.fwmrm.net/*",
+        "*://*.uplynk.com/*",
+        "*://*.innovid.com/*",
+        "*://*.spotxchange.com/*",
+        "*://*.springserve.com/*",
+        "*://ads.espn.com/*",
+        "*://ads.hulu.com/*",
+      ],
+      types: ["xmlhttprequest", "media", "script", "image", "other"]
+    }
+  );
+
+  // Periodically check and update ad state
+  setInterval(checkAdNetworkActivity, 2000);
+}
+
+// Handle detected ad network request
+function handleAdNetworkRequest(details) {
+  const tabId = details.tabId;
+  if (tabId < 0) return; // Ignore requests not associated with a tab
+
+  const now = Date.now();
+  const url = details.url;
+
+  // Check if this URL matches known ad domains
+  const isAdRequest = AD_NETWORK_CONFIG.AD_DOMAINS.some(domain => url.includes(domain));
+
+  if (isAdRequest) {
+    // Initialize or update tab's ad activity
+    if (!adNetworkActivity.has(tabId)) {
+      adNetworkActivity.set(tabId, {
+        lastAdRequest: now,
+        requestCount: 0,
+        isAdActive: false,
+        recentUrls: []
+      });
+    }
+
+    const activity = adNetworkActivity.get(tabId);
+    activity.lastAdRequest = now;
+    activity.requestCount++;
+    activity.recentUrls.push(url.substring(0, 80));
+    if (activity.recentUrls.length > 10) activity.recentUrls.shift();
+
+    // If we have enough ad requests, consider ad as active
+    if (activity.requestCount >= AD_NETWORK_CONFIG.MIN_AD_REQUESTS && !activity.isAdActive) {
+      activity.isAdActive = true;
+      console.log(`[Hush Tab] Ad network activity detected in tab ${tabId} (${activity.requestCount} requests)`);
+      handleNetworkAdDetected(tabId, true);
+    }
+  }
+}
+
+// Check ad network activity and update state
+function checkAdNetworkActivity() {
+  const now = Date.now();
+
+  adNetworkActivity.forEach((activity, tabId) => {
+    // Check if ad activity has timed out
+    if (activity.isAdActive) {
+      const timeSinceLastRequest = now - activity.lastAdRequest;
+      if (timeSinceLastRequest > AD_NETWORK_CONFIG.AD_ACTIVITY_TIMEOUT_MS) {
+        activity.isAdActive = false;
+        activity.requestCount = 0;
+        console.log(`[Hush Tab] Ad network activity ended in tab ${tabId} (timeout)`);
+        handleNetworkAdDetected(tabId, false);
+      }
+    }
+  });
+}
+
+// Handle network-based ad detection - send signal to content script for confidence scoring
+async function handleNetworkAdDetected(tabId, isAd) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+
+    // Check if this is a supported streaming site
+    const isSupportedSite = tab.url && (
+      tab.url.includes('espn.com') ||
+      tab.url.includes('hulu.com') ||
+      tab.url.includes('youtube.com') ||
+      tab.url.includes('nbc.com')
+    );
+
+    if (!isSupportedSite) return;
+
+    // Send signal to content script to use as confidence data point
+    console.log(`[Hush Tab] Sending network ad signal to tab ${tabId}: isAd=${isAd}`);
+    await chrome.tabs.sendMessage(tabId, {
+      action: 'networkAdDetected',
+      isAd: isAd,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    // Content script may not be loaded, ignore
+    console.log(`[Hush Tab] Could not send network ad signal to tab ${tabId}:`, error.message);
+  }
+}
 
 // Scan all existing tabs on startup
 async function scanAllTabs() {
@@ -127,7 +275,8 @@ function trackAudibleStateChange(tabId, audible, url) {
   const isSupportedSite = url && (
     url.includes('youtube.com') ||
     url.includes('hulu.com') ||
-    url.includes('espn.com')
+    url.includes('espn.com') ||
+    url.includes('nbc.com')
   );
 
   if (hasFlicker && canNotify && isSupportedSite) {
@@ -165,6 +314,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
   // Clean up audible state history
   audibleStateHistory.delete(tabId);
+  // Clean up ad network activity
+  adNetworkActivity.delete(tabId);
 });
 
 // Update badge with count of tabs playing audio

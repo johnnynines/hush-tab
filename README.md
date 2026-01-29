@@ -4,13 +4,14 @@ A cross-browser extension for Firefox and Chrome that detects and manages tabs p
 
 ## Features
 
-🔊 **Real-time Audio Detection** - Automatically detects when tabs start or stop playing audio  
-🎯 **Visual Badge Counter** - Shows the number of tabs playing audio on the extension icon  
-🤖 **Smart YouTube Ad Muting** - Automatically mutes YouTube ads and unmutes when content resumes  
-🔇 **Quick Mute/Unmute** - Control audio for each tab individually  
-👁️ **Instant Tab Switching** - Click to jump directly to any tab playing audio  
-⚙️ **Configurable Settings** - Toggle auto-mute on/off with one click  
-⚡ **Lightweight & Fast** - Minimal resource usage with efficient background monitoring  
+🔊 **Real-time Audio Detection** - Automatically detects when tabs start or stop playing audio
+🎯 **Visual Badge Counter** - Shows the number of tabs playing audio on the extension icon
+🤖 **Smart Ad Muting** - Automatically mutes ads on YouTube, Hulu, and ESPN, then unmutes when content resumes
+🔇 **Quick Mute/Unmute** - Control audio for each tab individually
+👁️ **Instant Tab Switching** - Click to jump directly to any tab playing audio
+⚙️ **Configurable Settings** - Toggle auto-mute on/off with one click
+🔬 **Diagnostic Tool** - Built-in tool for capturing and analyzing player data to improve ad detection
+⚡ **Lightweight & Fast** - Minimal resource usage with efficient background monitoring
 🌐 **Cross-Browser Compatible** - Works on both Firefox and Chrome (Manifest V3)
 
 ## Installation
@@ -111,6 +112,51 @@ The extension uses multiple detection strategies for high accuracy:
 - Respects manual user muting (won't auto-unmute)
 - Can be toggled on/off in popup
 
+## Diagnostic Tool
+
+The extension includes a built-in diagnostic tool for capturing and analyzing player data from streaming sites. This helps identify reliable ad detection signals by recording console logs, network requests, DOM changes, and player state during ad playback.
+
+### Features
+
+- **Console Log Capture** - Hooks into `console.log/warn/error/info/debug` to capture player debug logs
+- **Network Request Monitoring** - Intercepts `fetch` and `XHR` requests, automatically flags ad-related URLs
+- **DOM Mutation Tracking** - Watches for ad-related class and attribute changes in real-time
+- **Video Event Logging** - Captures play/pause/seeking events and video element state
+- **Platform-Specific State** - Captures YouTube, Hulu, and ESPN player state objects
+- **Manual Ad Markers** - Buttons to mark exactly when you observe ads starting and ending
+- **Analysis Summary** - Auto-generates a summary of detected ad signals
+- **Export Options** - JSON export for detailed analysis, clipboard copy for quick sharing
+
+### How to Use the Diagnostic Tool
+
+1. **Open the tool**: Click the extension icon, then click "Diagnostic Tool" to open it in a new tab
+
+2. **Select a tab**: Choose a tab with YouTube, Hulu, or ESPN content from the dropdown
+
+3. **Start recording**: Click "Start Recording" before an ad plays (or when you expect one)
+
+4. **Mark ad events**: Use the "Ad Started" and "Ad Ended" buttons when you visually observe ads begin and end - this correlates your observations with the captured data
+
+5. **Let ads play**: Allow the ad to play through completely while the tool captures data
+
+6. **Stop and analyze**: Click "Stop Recording" and review the captured data:
+   - **Console tab**: Player debug logs that may reveal ad state
+   - **Network tab**: Requests to ad servers (highlighted in yellow)
+   - **DOM tab**: Class changes on ad-related elements
+   - **Video tab**: Video element events and your manual markers
+   - **Player tab**: Platform-specific player state snapshots
+   - **Summary tab**: Auto-generated analysis of detected signals
+
+7. **Export data**: Click "Export as JSON" for detailed analysis or "Copy Summary" for a quick overview
+
+### Tips for Effective Data Collection
+
+- Record across multiple ad breaks to identify consistent patterns
+- Note the timestamp when ads start/end to correlate with captured data
+- Look for network requests that only appear during ads
+- Pay attention to class changes on player elements
+- The summary tab highlights the most promising detection signals
+
 ## Development
 
 ### Project Structure
@@ -119,14 +165,20 @@ The extension uses multiple detection strategies for high accuracy:
 mute_ads/
 ├── manifest.json          # Extension configuration
 ├── background.js          # Background service worker
-├── content-youtube.js     # YouTube ad detection script 🆕
-├── popup.html            # Popup UI structure
-├── popup.js              # Popup logic
-├── popup.css             # Popup styling
-├── icons/                # Extension icons (16, 32, 48, 128px)
+├── content-youtube.js     # YouTube ad detection script
+├── content-hulu.js        # Hulu ad detection script
+├── content-espn.js        # ESPN ad detection script
+├── content-diagnostic.js  # Diagnostic data capture script
+├── popup.html             # Popup UI structure
+├── popup.js               # Popup logic
+├── popup.css              # Popup styling
+├── diagnostic.html        # Diagnostic tool UI
+├── diagnostic.js          # Diagnostic tool logic
+├── diagnostic.css         # Diagnostic tool styling
+├── icons/                 # Extension icons (16, 32, 48, 128px)
 │   └── icon-placeholder.txt
-├── LICENSE               # GNU GPLv3
-└── README.md             # This file
+├── LICENSE                # GNU GPLv3
+└── README.md              # This file
 ```
 
 ### Adding Icons
@@ -212,15 +264,16 @@ You can create these using any image editor or icon generator. Recommended tools
 Here are some ways you could extend this extension:
 
 1. ✅ **Auto-mute YouTube ads** - IMPLEMENTED!
-2. **More platforms** - Add ad detection for Hulu, Twitch, Spotify
-3. **Audio analysis** - Use Web Audio API for non-YouTube ad detection
-4. **Whitelist/blacklist** - Allow audio from specific domains only
-5. **Keyboard shortcuts** - Add hotkeys for muting/unmuting
-6. **Audio visualization** - Show volume levels or waveforms
-7. **History tracking** - Keep a log of which tabs played audio
-8. **Smart notifications** - Alert when audio starts in background tabs
-9. **Bulk controls** - Mute/unmute all tabs at once
-10. **Machine learning** - Train models to detect ads by audio patterns
+2. ✅ **More platforms** - Hulu and ESPN support IMPLEMENTED!
+3. ✅ **Diagnostic tool** - Built-in data capture for ad detection analysis IMPLEMENTED!
+4. **Audio analysis** - Use Web Audio API for non-YouTube ad detection
+5. **Whitelist/blacklist** - Allow audio from specific domains only
+6. **Keyboard shortcuts** - Add hotkeys for muting/unmuting
+7. **Audio visualization** - Show volume levels or waveforms
+8. **History tracking** - Keep a log of which tabs played audio
+9. **Smart notifications** - Alert when audio starts in background tabs
+10. **Bulk controls** - Mute/unmute all tabs at once
+11. **Machine learning** - Train models to detect ads by audio patterns
 
 ## Browser Compatibility
 
@@ -231,6 +284,9 @@ Here are some ways you could extend this extension:
 | Mute/unmute | ✅ | ✅ | ✅ | ✅ |
 | Tab switching | ✅ | ✅ | ✅ | ✅ |
 | YouTube ad muting | ✅ | ✅ | ✅ | ✅ |
+| Hulu ad muting | ✅ | ✅ | ✅ | ✅ |
+| ESPN ad muting | ✅ | ✅ | ✅ | ✅ |
+| Diagnostic tool | ✅ | ✅ | ✅ | ✅ |
 
 **Minimum versions:**
 - Chrome 88+
@@ -242,8 +298,10 @@ Here are some ways you could extend this extension:
 
 - **`tabs`** - Required to access tab information including audio state, title, and URL
 - **`storage`** - Stores user preferences (auto-mute setting)
-- **`scripting`** - Required for content script injection
-- **`host_permissions`** - Access to YouTube.com for ad detection
+- **`scripting`** - Required for content script injection and diagnostic tool
+- **`webRequest`** - Monitors network requests for ad-related traffic
+- **`activeTab`** - Allows diagnostic script injection into the current tab
+- **`host_permissions`** - Access to YouTube, Hulu, ESPN, and ad network domains for detection
 
 ## Contributing
 

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hush Tab - Diagnostic Tool</title>
+  <link rel="stylesheet" href="diagnostic.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-top">
+        <a href="popup.html" class="back-link">&larr; Back</a>
+        <h1>Diagnostic Tool</h1>
+      </div>
+      <p class="subtitle">Capture player data for ad detection analysis</p>
+    </header>
+
+    <main>
+      <!-- Status Section -->
+      <section class="status-section">
+        <div class="status-card">
+          <div class="status-indicator" id="status-indicator">
+            <span class="status-dot"></span>
+            <span class="status-text">Not Recording</span>
+          </div>
+          <div class="platform-info" id="platform-info">
+            Platform: <span id="platform-name">--</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Controls Section -->
+      <section class="controls-section">
+        <div class="control-row">
+          <button id="start-btn" class="btn btn-primary">
+            <span class="btn-icon">&#9658;</span> Start Recording
+          </button>
+          <button id="stop-btn" class="btn btn-secondary" disabled>
+            <span class="btn-icon">&#9632;</span> Stop Recording
+          </button>
+        </div>
+
+        <div class="marker-controls">
+          <p class="marker-label">Mark ad events manually:</p>
+          <div class="control-row">
+            <button id="mark-ad-start" class="btn btn-marker btn-ad-start" disabled>
+              Ad Started
+            </button>
+            <button id="mark-ad-end" class="btn btn-marker btn-ad-end" disabled>
+              Ad Ended
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Stats Section -->
+      <section class="stats-section">
+        <h2>Captured Data</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-value" id="stat-console">0</span>
+            <span class="stat-label">Console Logs</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-network">0</span>
+            <span class="stat-label">Network Requests</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-dom">0</span>
+            <span class="stat-label">DOM Mutations</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-video">0</span>
+            <span class="stat-label">Video Events</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-player">0</span>
+            <span class="stat-label">Player States</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab Selector -->
+      <section class="tab-selector-section">
+        <label for="tab-selector">Select tab to diagnose:</label>
+        <select id="tab-selector">
+          <option value="">-- Select a tab --</option>
+        </select>
+        <button id="refresh-tabs" class="btn btn-small">Refresh</button>
+      </section>
+
+      <!-- Data Viewer Tabs -->
+      <section class="data-viewer-section">
+        <div class="viewer-tabs">
+          <button class="viewer-tab active" data-tab="console">Console</button>
+          <button class="viewer-tab" data-tab="network">Network</button>
+          <button class="viewer-tab" data-tab="dom">DOM</button>
+          <button class="viewer-tab" data-tab="video">Video</button>
+          <button class="viewer-tab" data-tab="player">Player</button>
+          <button class="viewer-tab" data-tab="summary">Summary</button>
+        </div>
+
+        <div class="viewer-content">
+          <div id="console-viewer" class="viewer-panel active">
+            <div class="panel-header">
+              <span>Console Logs</span>
+              <div class="filter-controls">
+                <label><input type="checkbox" id="filter-log" checked> log</label>
+                <label><input type="checkbox" id="filter-warn" checked> warn</label>
+                <label><input type="checkbox" id="filter-error" checked> error</label>
+              </div>
+            </div>
+            <div class="log-container" id="console-log-container"></div>
+          </div>
+
+          <div id="network-viewer" class="viewer-panel">
+            <div class="panel-header">
+              <span>Network Requests</span>
+              <div class="filter-controls">
+                <label><input type="checkbox" id="filter-ad-only"> Ad-related only</label>
+              </div>
+            </div>
+            <div class="log-container" id="network-log-container"></div>
+          </div>
+
+          <div id="dom-viewer" class="viewer-panel">
+            <div class="panel-header">
+              <span>DOM Mutations</span>
+            </div>
+            <div class="log-container" id="dom-log-container"></div>
+          </div>
+
+          <div id="video-viewer" class="viewer-panel">
+            <div class="panel-header">
+              <span>Video Events</span>
+            </div>
+            <div class="log-container" id="video-log-container"></div>
+          </div>
+
+          <div id="player-viewer" class="viewer-panel">
+            <div class="panel-header">
+              <span>Player State Snapshots</span>
+            </div>
+            <div class="log-container" id="player-log-container"></div>
+          </div>
+
+          <div id="summary-viewer" class="viewer-panel">
+            <div class="panel-header">
+              <span>Analysis Summary</span>
+            </div>
+            <div class="summary-content" id="summary-content">
+              <p class="placeholder">Record some data first, then view the analysis summary here.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Export Section -->
+      <section class="export-section">
+        <button id="export-json" class="btn btn-export">
+          Export as JSON
+        </button>
+        <button id="copy-summary" class="btn btn-export">
+          Copy Summary
+        </button>
+      </section>
+
+      <!-- Instructions -->
+      <section class="instructions-section">
+        <h3>How to use:</h3>
+        <ol>
+          <li>Select a tab with a streaming site (YouTube, Hulu, ESPN)</li>
+          <li>Click "Start Recording" before an ad plays</li>
+          <li>Use "Ad Started" / "Ad Ended" buttons to mark transitions</li>
+          <li>Let the ad play through, then stop recording</li>
+          <li>Review captured data to find reliable ad detection signals</li>
+          <li>Export data for further analysis</li>
+        </ol>
+      </section>
+    </main>
+  </div>
+
+  <script src="diagnostic.js"></script>
+</body>
+</html>

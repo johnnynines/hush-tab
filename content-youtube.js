@@ -17,6 +17,7 @@
 
   // Detection weights for confidence scoring
   const WEIGHTS = {
+    NETWORK_AD_DETECTED: 50,           // Network requests to ad servers detected
     AD_SHOWING_CLASS: 40,              // .ad-showing on player
     AD_MODULE_HAS_CHILDREN: 35,        // .ytp-ad-module with content
     AD_PLAYER_OVERLAY: 30,             // .ytp-ad-player-overlay present
@@ -44,6 +45,10 @@
   // Audible flicker state (received from background script)
   let recentAudibleFlicker = false;
   let audibleFlickerTimeout = null;
+
+  // Network-based ad detection state (received from background script)
+  let networkAdActive = false;
+  let networkAdTimeout = null;
 
   // Load auto-mute preference from storage
   chrome.storage.sync.get(['autoMuteAds'], (result) => {
@@ -92,6 +97,33 @@
 
       sendResponse({ received: true });
     }
+
+    // Network-based ad detection signal from background script
+    if (request.action === 'networkAdDetected') {
+      console.log(`[Hush Tab] YouTube received network ad signal: isAd=${request.isAd}`);
+      networkAdActive = request.isAd;
+
+      // Clear any existing timeout
+      if (networkAdTimeout) {
+        clearTimeout(networkAdTimeout);
+        networkAdTimeout = null;
+      }
+
+      // If ad ended, keep the signal active briefly then clear
+      if (!request.isAd) {
+        networkAdTimeout = setTimeout(() => {
+          networkAdActive = false;
+        }, 1000);
+      }
+
+      // Trigger immediate check
+      if (isAutoMuteEnabled) {
+        checkForAds();
+      }
+
+      sendResponse({ received: true });
+    }
+
     return true;
   });
 
@@ -125,6 +157,12 @@
   function getAdConfidence() {
     let confidence = 0;
     const signals = [];
+
+    // Signal 0: Network-based ad detection from background script
+    if (networkAdActive) {
+      confidence += WEIGHTS.NETWORK_AD_DETECTED;
+      signals.push('network-ad-detected');
+    }
 
     // Signal 1: .ad-showing class on player (most reliable)
     const player = document.querySelector('.html5-video-player');

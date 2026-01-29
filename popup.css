@@ -55,6 +55,28 @@ header h1 {
   font-weight: 500;
 }
 
+/* Diagnostic link */
+.diagnostic-link {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  text-align: center;
+}
+
+.diagnostic-link a {
+  color: rgba(255, 255, 255, 0.9);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  transition: background 0.2s;
+}
+
+.diagnostic-link a:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
 /* Toggle Switch */
 .toggle-switch {
   position: relative;
