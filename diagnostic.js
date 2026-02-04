@@ -321,10 +321,10 @@ function refreshNetworkView() {
   elements.networkLogContainer.innerHTML = filtered.slice(-100).map(req => `
     <div class="log-entry ${req.isAdRelated ? 'log-ad-related' : ''}">
       <span class="log-time">${formatTime(req.timestamp)}</span>
-      <span class="log-method">[${req.method}]</span>
-      <span class="log-status ${req.error ? 'status-error' : ''}">${req.status || req.error || '...'}</span>
+      <span class="log-method">[${req.type}]</span>
       <span class="log-url ${req.isAdRelated ? 'url-ad' : ''}">${escapeHtml(req.url)}</span>
       ${req.duration ? `<span class="log-duration">${req.duration}ms</span>` : ''}
+      ${req.transferSize ? `<span class="log-size">${formatSize(req.transferSize)}</span>` : ''}
     </div>
   `).join('');
 
@@ -423,6 +423,16 @@ function refreshPlayerView() {
           apiAdPlaying: ${state.espnPlayer.espnApiAdPlaying},
           imaContainer: ${state.espnPlayer.imaContainer}
           ${state.espnPlayer.adCountdown ? `, countdown: "${escapeHtml(state.espnPlayer.adCountdown)}"` : ''}
+        </div>`;
+    } else if (state.nbcPlayer) {
+      platformInfo = `
+        <div class="platform-state nbc">
+          <strong>NBC:</strong>
+          vjsAdPlaying: ${state.nbcPlayer.vjsAdPlaying},
+          shortVideo: ${state.nbcPlayer.isShortVideo}${state.nbcPlayer.videoDuration ? ` (${Math.round(state.nbcPlayer.videoDuration)}s)` : ''},
+          adOverlay: ${state.nbcPlayer.adOverlay},
+          imaContainer: ${state.nbcPlayer.imaContainer}
+          ${state.nbcPlayer.adTextFound ? `, adText: "${escapeHtml(state.nbcPlayer.adTextFound)}"` : ''}
         </div>`;
     }
 
@@ -563,6 +573,13 @@ function analyzeDiagnosticData(data) {
 
     if (state.espnPlayer?.espnApiAdPlaying) adSignalsSet.add('ESPN: API reports ad playing');
     if (state.espnPlayer?.imaContainer) adSignalsSet.add('ESPN: Google IMA container present');
+
+    if (state.nbcPlayer?.vjsAdPlaying) adSignalsSet.add('NBC: Video.js ad-playing state detected');
+    if (state.nbcPlayer?.isShortVideo) adSignalsSet.add(`NBC: Short video duration (${Math.round(state.nbcPlayer.videoDuration)}s) - likely ad`);
+    if (state.nbcPlayer?.adOverlay) adSignalsSet.add('NBC: Ad overlay/container visible');
+    if (state.nbcPlayer?.imaContainer) adSignalsSet.add('NBC: Google IMA container present');
+    if (state.nbcPlayer?.adTextFound) adSignalsSet.add(`NBC: Ad text detected: "${state.nbcPlayer.adTextFound}"`);
+    if (state.nbcPlayer?.seekDisabled) adSignalsSet.add('NBC: Seek bar disabled');
   });
   summary.adSignals = Array.from(adSignalsSet).map(desc => ({ type: 'Player State', description: desc }));
 
@@ -659,6 +676,12 @@ function copySummary() {
 }
 
 // Utility functions
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 function formatTime(ms) {
   if (ms === undefined || ms === null) return '--';
   const seconds = Math.floor(ms / 1000);

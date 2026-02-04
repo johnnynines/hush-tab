@@ -4,8 +4,6 @@
 (function() {
   'use strict';
 
-  console.log('[Hush Tab] Hulu content script loaded (confidence-based detection)');
-
   // Configuration
   const CONFIG = {
     MUTE_THRESHOLD: 50,           // Confidence score to trigger mute
@@ -48,7 +46,6 @@
   // Load auto-mute preference from storage
   chrome.storage.sync.get(['autoMuteAds'], (result) => {
     isAutoMuteEnabled = result.autoMuteAds !== false;
-    console.log('[Hush Tab] Auto-mute enabled:', isAutoMuteEnabled);
 
     if (isAutoMuteEnabled) {
       startMonitoring();
@@ -59,7 +56,6 @@
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'sync' && changes.autoMuteAds) {
       isAutoMuteEnabled = changes.autoMuteAds.newValue;
-      console.log('[Hush Tab] Auto-mute setting changed:', isAutoMuteEnabled);
 
       if (isAutoMuteEnabled) {
         startMonitoring();
@@ -72,7 +68,6 @@
   // Listen for audible state changes from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'audibleStateChanged') {
-      console.log(`[Hush Tab] Received audible flicker notification (count: ${request.flickerCount})`);
       recentAudibleFlicker = true;
 
       if (audibleFlickerTimeout) {
@@ -91,7 +86,6 @@
 
     // Network-based ad detection signal from background script
     if (request.action === 'networkAdDetected') {
-      console.log(`[Hush Tab] Hulu received network ad signal: isAd=${request.isAd}`);
       networkAdActive = request.isAd;
 
       // Clear any existing timeout
@@ -121,7 +115,6 @@
   function startMonitoring() {
     if (checkInterval) return;
 
-    console.log('[Hush Tab] Starting Hulu ad monitoring (confidence-based)');
     checkForAds();
     checkInterval = setInterval(checkForAds, CONFIG.CHECK_INTERVAL_MS);
     observeDOMChanges();
@@ -131,7 +124,6 @@
     if (checkInterval) {
       clearInterval(checkInterval);
       checkInterval = null;
-      console.log('[Hush Tab] Stopped Hulu ad monitoring');
     }
   }
 
@@ -252,7 +244,6 @@
     confidence = Math.min(confidence, 100);
 
     if (confidence !== lastConfidence) {
-      console.log(`[Hush Tab] Hulu Confidence: ${confidence} | Signals: ${signals.join(', ') || 'none'}`);
     }
 
     return confidence;
@@ -301,23 +292,19 @@
     if (!currentAdState && confidence >= CONFIG.MUTE_THRESHOLD) {
       currentAdState = true;
       lowConfidenceStartTime = null;
-      console.log(`[Hush Tab] Hulu AD DETECTED (confidence: ${confidence}) - Muting`);
       notifyBackgroundScript(true);
 
     } else if (currentAdState && confidence < CONFIG.UNMUTE_THRESHOLD) {
       if (lowConfidenceStartTime === null) {
         lowConfidenceStartTime = now;
-        console.log(`[Hush Tab] Confidence dropped to ${confidence}, waiting ${CONFIG.UNMUTE_DELAY_MS}ms before unmute`);
       } else if (now - lowConfidenceStartTime >= CONFIG.UNMUTE_DELAY_MS) {
         currentAdState = false;
         lowConfidenceStartTime = null;
-        console.log(`[Hush Tab] Hulu AD ENDED (confidence: ${confidence}) - Unmuting`);
         notifyBackgroundScript(false);
       }
 
     } else if (currentAdState && confidence >= CONFIG.UNMUTE_THRESHOLD) {
       if (lowConfidenceStartTime !== null) {
-        console.log(`[Hush Tab] Confidence recovered to ${confidence}, canceling unmute`);
         lowConfidenceStartTime = null;
       }
     }
@@ -330,8 +317,8 @@
       url: window.location.href,
       confidence: lastConfidence,
       platform: 'hulu'
-    }).catch(err => {
-      console.log('[Hush Tab] Could not send message:', err);
+    }).catch(() => {
+      // Extension context may be invalidated
     });
   }
 
@@ -384,7 +371,6 @@
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
-      console.log('[Hush Tab] Hulu navigation detected');
       currentAdState = false;
       lowConfidenceStartTime = null;
       lastVideoTime = 0;

@@ -68,7 +68,6 @@ chrome.runtime.onInstalled.addListener(() => {
 
 // Setup network-based ad detection
 function setupNetworkAdDetection() {
-  console.log('[Hush Tab] Setting up network-based ad detection');
 
   // Listen for web requests to ad servers
   chrome.webRequest.onBeforeRequest.addListener(
@@ -128,7 +127,6 @@ function handleAdNetworkRequest(details) {
     // If we have enough ad requests, consider ad as active
     if (activity.requestCount >= AD_NETWORK_CONFIG.MIN_AD_REQUESTS && !activity.isAdActive) {
       activity.isAdActive = true;
-      console.log(`[Hush Tab] Ad network activity detected in tab ${tabId} (${activity.requestCount} requests)`);
       handleNetworkAdDetected(tabId, true);
     }
   }
@@ -145,7 +143,6 @@ function checkAdNetworkActivity() {
       if (timeSinceLastRequest > AD_NETWORK_CONFIG.AD_ACTIVITY_TIMEOUT_MS) {
         activity.isAdActive = false;
         activity.requestCount = 0;
-        console.log(`[Hush Tab] Ad network activity ended in tab ${tabId} (timeout)`);
         handleNetworkAdDetected(tabId, false);
       }
     }
@@ -168,7 +165,6 @@ async function handleNetworkAdDetected(tabId, isAd) {
     if (!isSupportedSite) return;
 
     // Send signal to content script to use as confidence data point
-    console.log(`[Hush Tab] Sending network ad signal to tab ${tabId}: isAd=${isAd}`);
     await chrome.tabs.sendMessage(tabId, {
       action: 'networkAdDetected',
       isAd: isAd,
@@ -176,7 +172,6 @@ async function handleNetworkAdDetected(tabId, isAd) {
     });
   } catch (error) {
     // Content script may not be loaded, ignore
-    console.log(`[Hush Tab] Could not send network ad signal to tab ${tabId}:`, error.message);
   }
 }
 
@@ -281,7 +276,6 @@ function trackAudibleStateChange(tabId, audible, url) {
 
   if (hasFlicker && canNotify && isSupportedSite) {
     history.lastNotified = now;
-    console.log(`[Hush Tab] Audible flicker detected in tab ${tabId} (${history.changes.length} changes in ${AUDIBLE_CONFIG.HISTORY_WINDOW_MS}ms)`);
 
     // Notify the content script about the audible state change
     notifyContentScriptAudibleChange(tabId, audible, history.changes.length);
@@ -301,7 +295,6 @@ async function notifyContentScriptAudibleChange(tabId, audible, changeCount) {
     });
   } catch (error) {
     // Content script may not be loaded yet, ignore
-    console.log(`[Hush Tab] Could not notify content script in tab ${tabId}:`, error.message);
   }
 }
 
@@ -401,29 +394,24 @@ async function handleAdStateChange(tabId, isAd) {
     const autoMuteEnabled = settings.autoMuteAds !== false;
     
     if (!autoMuteEnabled) {
-      console.log(`[Hush Tab] Auto-mute disabled, ignoring ad state for tab ${tabId}`);
       return;
     }
     
     if (isAd) {
       // Ad started - mute the tab if not already muted
       if (!tab.mutedInfo.muted) {
-        console.log(`[Hush Tab] Ad detected in tab ${tabId}, auto-muting`);
         await chrome.tabs.update(tabId, { muted: true });
         autoMutedTabs.add(tabId);
       }
     } else {
       // Content resumed - unmute only if we auto-muted it
       if (autoMutedTabs.has(tabId)) {
-        console.log(`[Hush Tab] Content resumed in tab ${tabId}, auto-unmuting`);
         await chrome.tabs.update(tabId, { muted: false });
         autoMutedTabs.delete(tabId);
-      } else {
-        console.log(`[Hush Tab] Content resumed in tab ${tabId}, but was not auto-muted (user may have manually muted)`);
       }
     }
   } catch (error) {
-    console.error(`[Hush Tab] Error handling ad state change for tab ${tabId}:`, error);
+    // Error handling ad state change
   }
 }
 

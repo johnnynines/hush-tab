@@ -4,12 +4,6 @@
 (function() {
   'use strict';
 
-  // Detect if we're in an iframe
-  const isInIframe = window.self !== window.top;
-  const frameInfo = isInIframe ? `(IFRAME: ${window.location.hostname})` : '(MAIN FRAME)';
-
-  console.log(`[Hush Tab] ESPN content script loaded ${frameInfo} - URL: ${window.location.href.substring(0, 100)}`);
-
   // Configuration
   const CONFIG = {
     MUTE_THRESHOLD: 50,           // Confidence score to trigger mute
@@ -58,7 +52,6 @@
   // Load auto-mute preference from storage
   chrome.storage.sync.get(['autoMuteAds'], (result) => {
     isAutoMuteEnabled = result.autoMuteAds !== false;
-    console.log('[Hush Tab] Auto-mute enabled:', isAutoMuteEnabled);
 
     if (isAutoMuteEnabled) {
       startMonitoring();
@@ -69,7 +62,6 @@
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'sync' && changes.autoMuteAds) {
       isAutoMuteEnabled = changes.autoMuteAds.newValue;
-      console.log('[Hush Tab] Auto-mute setting changed:', isAutoMuteEnabled);
 
       if (isAutoMuteEnabled) {
         startMonitoring();
@@ -82,7 +74,6 @@
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'audibleStateChanged') {
-      console.log(`[Hush Tab] Received audible flicker notification (count: ${request.flickerCount})`);
       recentAudibleFlicker = true;
 
       if (audibleFlickerTimeout) {
@@ -101,7 +92,6 @@
 
     // Network-based ad detection signal from background script
     if (request.action === 'networkAdDetected') {
-      console.log(`[Hush Tab] ESPN received network ad signal: isAd=${request.isAd}`);
       networkAdActive = request.isAd;
 
       // Clear any existing timeout
@@ -131,120 +121,15 @@
   function startMonitoring() {
     if (checkInterval) return;
 
-    console.log('[Hush Tab] Starting ESPN ad monitoring (confidence-based)');
-
-    // Debug: Log what video elements exist
-    const videos = document.querySelectorAll('video');
-    console.log(`[Hush Tab] ESPN found ${videos.length} video element(s)`);
-
-    // Debug: Run a DOM diagnostic once at start
-    runDiagnostic();
-
     checkForAds();
     checkInterval = setInterval(checkForAds, CONFIG.CHECK_INTERVAL_MS);
     observeDOMChanges();
-
-    // Run diagnostic every 10 seconds to see DOM state
-    setInterval(runDiagnostic, 10000);
-  }
-
-  function runDiagnostic() {
-    console.log(`[Hush Tab] === ESPN DOM Diagnostic ${frameInfo} ===`);
-
-    // Check for ALL video elements
-    const videos = document.querySelectorAll('video');
-    console.log(`[Hush Tab] Found ${videos.length} video element(s)`);
-
-    videos.forEach((video, i) => {
-      const isPlaying = !video.paused && !video.ended && video.currentTime > 0;
-      console.log(`[Hush Tab] Video[${i}]: playing=${isPlaying}, paused=${video.paused}, currentTime=${video.currentTime.toFixed(1)}, duration=${video.duration}, src=${(video.src || video.currentSrc || 'none').substring(0, 50)}`);
-    });
-
-    // Check the WebPlayerContainer specifically for ESPN
-    const playerContainer = document.querySelector('.WebPlayerContainer, [class*="WebPlayerContainer"]');
-    if (playerContainer) {
-      console.log(`[Hush Tab] WebPlayerContainer classes: ${playerContainer.className}`);
-
-      // Look for any child elements that might indicate ad state
-      const allChildren = playerContainer.querySelectorAll('*');
-      const interestingElements = [];
-      allChildren.forEach(el => {
-        const className = el.className || '';
-        const text = (el.textContent || '').trim();
-        // Look for elements with short text that might be ad indicators
-        if (text.length > 0 && text.length < 50 && /ad|skip|commercial|\d+\s*of\s*\d+/i.test(text)) {
-          interestingElements.push({ class: className.substring(0, 50), text: text.substring(0, 30) });
-        }
-        // Look for interesting class names
-        if (/ad|commercial|skip|overlay|countdown/i.test(className)) {
-          interestingElements.push({ class: className.substring(0, 50), text: '' });
-        }
-      });
-
-      if (interestingElements.length > 0) {
-        console.log(`[Hush Tab] Interesting elements in player: ${JSON.stringify(interestingElements.slice(0, 5))}`);
-      }
-    }
-
-    // Check for common ad-related elements
-    const adSelectors = [
-      '[class*="ad-"]',
-      '[class*="Ad"]',
-      '[class*="commercial"]',
-      '[class*="Commercial"]',
-      '[class*="advertisement"]',
-      '[data-ad]',
-      '[class*="ima-"]',
-      '.videoAdUi',
-      '[class*="bam"]',
-      '[class*="bam-"]',
-      '[class*="skip"]',
-      '[class*="Skip"]',
-    ];
-
-    for (const selector of adSelectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length > 0) {
-        const details = Array.from(elements).slice(0, 3).map(el => ({
-          class: (el.className || '').substring(0, 40),
-          text: (el.textContent || '').substring(0, 20).trim()
-        }));
-        console.log(`[Hush Tab] Found ${elements.length} "${selector}":`, details);
-      }
-    }
-
-    // Look for ANY visible text that says "Ad" in the player area
-    const playerArea = document.querySelector('.WebPlayerContainer, [class*="player"]');
-    if (playerArea) {
-      const walker = document.createTreeWalker(playerArea, NodeFilter.SHOW_TEXT, null, false);
-      const adTexts = [];
-      while (walker.nextNode()) {
-        const text = walker.currentNode.textContent.trim();
-        if (text.length > 0 && text.length < 30) {
-          // Look for ad indicators
-          if (/^ad$/i.test(text) || /^ad\s*\d/i.test(text) || /^\d+\s*of\s*\d+$/i.test(text) ||
-              /skip/i.test(text) || /commercial/i.test(text)) {
-            adTexts.push(text);
-          }
-        }
-      }
-      if (adTexts.length > 0) {
-        console.log(`[Hush Tab] Ad-related text found in player: ${JSON.stringify(adTexts)}`);
-      }
-    }
-
-    // Log current confidence
-    const confidence = getAdConfidence();
-    console.log(`[Hush Tab] Current confidence: ${confidence}`);
-
-    console.log(`[Hush Tab] === End Diagnostic ${frameInfo} ===`);
   }
 
   function stopMonitoring() {
     if (checkInterval) {
       clearInterval(checkInterval);
       checkInterval = null;
-      console.log('[Hush Tab] Stopped ESPN ad monitoring');
     }
   }
 
@@ -296,7 +181,6 @@
 
       // Track duration changes - when switching from Infinity to finite or vice versa
       if (duration !== lastKnownDuration) {
-        console.log(`[Hush Tab] ESPN duration changed: ${lastKnownDuration} -> ${duration}`);
         lastKnownDuration = duration;
 
         // Finite duration appearing after Infinity often indicates ad start
@@ -444,7 +328,6 @@
     confidence = Math.min(confidence, 100);
 
     if (confidence !== lastConfidence) {
-      console.log(`[Hush Tab] ESPN Confidence: ${confidence} | Signals: ${signals.join(', ') || 'none'}`);
     }
 
     return confidence;
@@ -490,7 +373,6 @@
 
     // Debug: Log threshold comparison when confidence changes
     if (confidence > 0 && confidence !== lastConfidence) {
-      console.log(`[Hush Tab] ESPN threshold check: confidence=${confidence}, threshold=${CONFIG.MUTE_THRESHOLD}, currentAdState=${currentAdState}`);
     }
 
     lastConfidence = confidence;
@@ -498,40 +380,33 @@
     if (!currentAdState && confidence >= CONFIG.MUTE_THRESHOLD) {
       currentAdState = true;
       lowConfidenceStartTime = null;
-      console.log(`[Hush Tab] ESPN AD DETECTED (confidence: ${confidence}) - Muting`);
       notifyBackgroundScript(true);
 
     } else if (currentAdState && confidence < CONFIG.UNMUTE_THRESHOLD) {
       if (lowConfidenceStartTime === null) {
         lowConfidenceStartTime = now;
-        console.log(`[Hush Tab] Confidence dropped to ${confidence}, waiting ${CONFIG.UNMUTE_DELAY_MS}ms before unmute`);
       } else if (now - lowConfidenceStartTime >= CONFIG.UNMUTE_DELAY_MS) {
         currentAdState = false;
         lowConfidenceStartTime = null;
-        console.log(`[Hush Tab] ESPN AD ENDED (confidence: ${confidence}) - Unmuting`);
         notifyBackgroundScript(false);
       }
 
     } else if (currentAdState && confidence >= CONFIG.UNMUTE_THRESHOLD) {
       if (lowConfidenceStartTime !== null) {
-        console.log(`[Hush Tab] Confidence recovered to ${confidence}, canceling unmute`);
         lowConfidenceStartTime = null;
       }
     }
   }
 
   function notifyBackgroundScript(isAd) {
-    console.log(`[Hush Tab] ESPN sending adStateChanged message: isAd=${isAd}, confidence=${lastConfidence}`);
     chrome.runtime.sendMessage({
       action: 'adStateChanged',
       isAd: isAd,
       url: window.location.href,
       confidence: lastConfidence,
       platform: 'espn'
-    }).then(response => {
-      console.log(`[Hush Tab] ESPN message sent successfully, response:`, response);
-    }).catch(err => {
-      console.log('[Hush Tab] Could not send message:', err);
+    }).catch(() => {
+      // Extension context may be invalidated
     });
   }
 
@@ -587,7 +462,6 @@
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
-      console.log('[Hush Tab] ESPN navigation detected');
       currentAdState = false;
       lowConfidenceStartTime = null;
       lastVideoTime = 0;

@@ -4,12 +4,6 @@
 (function() {
   'use strict';
 
-  // Detect if we're in an iframe
-  const isInIframe = window.self !== window.top;
-  const frameInfo = isInIframe ? `(IFRAME: ${window.location.hostname})` : '(MAIN FRAME)';
-
-  console.log(`[Hush Tab] NBC content script loaded ${frameInfo} - URL: ${window.location.href.substring(0, 100)}`);
-
   // Configuration
   const CONFIG = {
     MUTE_THRESHOLD: 60,           // Confidence score to trigger mute (higher for NBC to avoid false positives)
@@ -17,6 +11,7 @@
     UNMUTE_DELAY_MS: 2000,        // How long confidence must stay low before unmute
     CHECK_INTERVAL_MS: 500,       // Polling interval
     VIDEO_STALL_THRESHOLD_MS: 1000, // Time without progress to consider stalled
+    STARTUP_GRACE_MS: 5000,       // Ignore ad detection for this long after page load
   };
 
   // Detection weights for confidence scoring
@@ -53,11 +48,11 @@
   let videoTimeStalled = false;
   let recentAudibleFlicker = false;
   let audibleFlickerTimeout = null;
+  let monitoringStartTime = null;
 
   // Load auto-mute preference from storage
   chrome.storage.sync.get(['autoMuteAds'], (result) => {
     isAutoMuteEnabled = result.autoMuteAds !== false;
-    console.log('[Hush Tab] Auto-mute enabled:', isAutoMuteEnabled);
 
     if (isAutoMuteEnabled) {
       startMonitoring();
@@ -68,7 +63,6 @@
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'sync' && changes.autoMuteAds) {
       isAutoMuteEnabled = changes.autoMuteAds.newValue;
-      console.log('[Hush Tab] Auto-mute setting changed:', isAutoMuteEnabled);
 
       if (isAutoMuteEnabled) {
         startMonitoring();
@@ -81,7 +75,6 @@
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'audibleStateChanged') {
-      console.log(`[Hush Tab] Received audible flicker notification (count: ${request.flickerCount})`);
       recentAudibleFlicker = true;
 
       if (audibleFlickerTimeout) {
@@ -100,7 +93,6 @@
 
     // Network-based ad detection signal from background script
     if (request.action === 'networkAdDetected') {
-      console.log(`[Hush Tab] NBC received network ad signal: isAd=${request.isAd}`);
       networkAdActive = request.isAd;
 
       if (networkAdTimeout) {
@@ -127,83 +119,17 @@
   function startMonitoring() {
     if (checkInterval) return;
 
-    console.log('[Hush Tab] Starting NBC ad monitoring (confidence-based)');
+    monitoringStartTime = Date.now();
 
-    const videos = document.querySelectorAll('video');
-    console.log(`[Hush Tab] NBC found ${videos.length} video element(s)`);
-
-    runDiagnostic();
     checkForAds();
     checkInterval = setInterval(checkForAds, CONFIG.CHECK_INTERVAL_MS);
     observeDOMChanges();
-
-    setInterval(runDiagnostic, 10000);
-  }
-
-  function runDiagnostic() {
-    console.log(`[Hush Tab] === NBC DOM Diagnostic ${frameInfo} ===`);
-
-    const videos = document.querySelectorAll('video');
-    console.log(`[Hush Tab] Found ${videos.length} video element(s)`);
-
-    videos.forEach((video, i) => {
-      const isPlaying = !video.paused && !video.ended && video.currentTime > 0;
-      console.log(`[Hush Tab] Video[${i}]: playing=${isPlaying}, paused=${video.paused}, currentTime=${video.currentTime.toFixed(1)}, duration=${video.duration}, src=${(video.src || video.currentSrc || 'none').substring(0, 50)}`);
-    });
-
-    // Check for NBC-specific player containers
-    const playerSelectors = [
-      '[class*="video-player"]',
-      '[class*="VideoPlayer"]',
-      '[class*="player-container"]',
-      '[class*="PlayerContainer"]',
-      '[data-video-player]',
-      '.vjs-player',
-      '.video-js',
-    ];
-
-    for (const selector of playerSelectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length > 0) {
-        console.log(`[Hush Tab] Found ${elements.length} "${selector}" element(s)`);
-      }
-    }
-
-    // Check for ad-related elements
-    const adSelectors = [
-      '[class*="ad-"]',
-      '[class*="Ad"]',
-      '[class*="commercial"]',
-      '[class*="Commercial"]',
-      '[class*="advertisement"]',
-      '[data-ad]',
-      '[class*="ima-"]',
-      '.vjs-ad-playing',
-      '[class*="ad-break"]',
-      '[class*="adBreak"]',
-    ];
-
-    for (const selector of adSelectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length > 0) {
-        const details = Array.from(elements).slice(0, 3).map(el => ({
-          class: (el.className || '').substring(0, 40),
-          text: (el.textContent || '').substring(0, 20).trim()
-        }));
-        console.log(`[Hush Tab] Found ${elements.length} "${selector}":`, details);
-      }
-    }
-
-    const confidence = getAdConfidence();
-    console.log(`[Hush Tab] Current confidence: ${confidence}`);
-    console.log(`[Hush Tab] === End Diagnostic ${frameInfo} ===`);
   }
 
   function stopMonitoring() {
     if (checkInterval) {
       clearInterval(checkInterval);
       checkInterval = null;
-      console.log('[Hush Tab] Stopped NBC ad monitoring');
     }
   }
 
@@ -245,7 +171,6 @@
       }
 
       if (duration !== lastKnownDuration) {
-        console.log(`[Hush Tab] NBC duration changed: ${lastKnownDuration} -> ${duration}`);
         lastKnownDuration = duration;
       }
     }
@@ -324,11 +249,24 @@
     // Signal 6: Ad badge visible
     const adBadge = document.querySelector(
       '[class*="ad-badge"], [class*="adBadge"], [class*="ad-label"], ' +
-      '[class*="adLabel"], [aria-label*="ad" i], [aria-label*="commercial" i]'
+      '[class*="adLabel"], [aria-label*="commercial" i]'
     );
     if (adBadge && isElementVisible(adBadge)) {
       confidence += WEIGHTS.AD_BADGE_VISIBLE;
       signals.push('ad-badge');
+    }
+    // Separate check for aria-label "ad" with word boundary validation
+    // to avoid false positives from "loading", "download", "broadcast", etc.
+    if (!signals.includes('ad-badge')) {
+      const ariaAdElements = document.querySelectorAll('[aria-label]');
+      for (const el of ariaAdElements) {
+        const label = el.getAttribute('aria-label') || '';
+        if (/\bad\b/i.test(label) && isElementVisible(el)) {
+          confidence += WEIGHTS.AD_BADGE_VISIBLE;
+          signals.push('ad-badge');
+          break;
+        }
+      }
     }
 
     // Signal 7: Video time frozen
@@ -373,7 +311,6 @@
     confidence = Math.min(confidence, 100);
 
     if (confidence !== lastConfidence) {
-      console.log(`[Hush Tab] NBC Confidence: ${confidence} | Signals: ${signals.join(', ') || 'none'}`);
     }
 
     return confidence;
@@ -417,8 +354,13 @@
     const confidence = getAdConfidence();
     const now = Date.now();
 
+    // Skip muting during startup grace period to avoid false positives
+    // from transient DOM states during page load
+    if (monitoringStartTime && (now - monitoringStartTime < CONFIG.STARTUP_GRACE_MS)) {
+      return;
+    }
+
     if (confidence > 0 && confidence !== lastConfidence) {
-      console.log(`[Hush Tab] NBC threshold check: confidence=${confidence}, threshold=${CONFIG.MUTE_THRESHOLD}, currentAdState=${currentAdState}`);
     }
 
     lastConfidence = confidence;
@@ -426,40 +368,33 @@
     if (!currentAdState && confidence >= CONFIG.MUTE_THRESHOLD) {
       currentAdState = true;
       lowConfidenceStartTime = null;
-      console.log(`[Hush Tab] NBC AD DETECTED (confidence: ${confidence}) - Muting`);
       notifyBackgroundScript(true);
 
     } else if (currentAdState && confidence < CONFIG.UNMUTE_THRESHOLD) {
       if (lowConfidenceStartTime === null) {
         lowConfidenceStartTime = now;
-        console.log(`[Hush Tab] Confidence dropped to ${confidence}, waiting ${CONFIG.UNMUTE_DELAY_MS}ms before unmute`);
       } else if (now - lowConfidenceStartTime >= CONFIG.UNMUTE_DELAY_MS) {
         currentAdState = false;
         lowConfidenceStartTime = null;
-        console.log(`[Hush Tab] NBC AD ENDED (confidence: ${confidence}) - Unmuting`);
         notifyBackgroundScript(false);
       }
 
     } else if (currentAdState && confidence >= CONFIG.UNMUTE_THRESHOLD) {
       if (lowConfidenceStartTime !== null) {
-        console.log(`[Hush Tab] Confidence recovered to ${confidence}, canceling unmute`);
         lowConfidenceStartTime = null;
       }
     }
   }
 
   function notifyBackgroundScript(isAd) {
-    console.log(`[Hush Tab] NBC sending adStateChanged message: isAd=${isAd}, confidence=${lastConfidence}`);
     chrome.runtime.sendMessage({
       action: 'adStateChanged',
       isAd: isAd,
       url: window.location.href,
       confidence: lastConfidence,
       platform: 'nbc'
-    }).then(response => {
-      console.log(`[Hush Tab] NBC message sent successfully, response:`, response);
-    }).catch(err => {
-      console.log('[Hush Tab] Could not send message:', err);
+    }).catch(() => {
+      // Extension context may be invalidated
     });
   }
 
@@ -515,7 +450,6 @@
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
-      console.log('[Hush Tab] NBC navigation detected');
       currentAdState = false;
       lowConfidenceStartTime = null;
       lastVideoTime = 0;
@@ -523,6 +457,7 @@
       videoTimeStalled = false;
       recentAudibleFlicker = false;
       networkAdActive = false;
+      monitoringStartTime = Date.now();
       if (audibleFlickerTimeout) {
         clearTimeout(audibleFlickerTimeout);
         audibleFlickerTimeout = null;

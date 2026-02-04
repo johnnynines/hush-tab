@@ -4,8 +4,6 @@
 (function() {
   'use strict';
 
-  console.log('[Hush Tab] YouTube content script loaded (confidence-based detection)');
-
   // Configuration
   const CONFIG = {
     MUTE_THRESHOLD: 50,           // Confidence score to trigger mute
@@ -53,7 +51,6 @@
   // Load auto-mute preference from storage
   chrome.storage.sync.get(['autoMuteAds'], (result) => {
     isAutoMuteEnabled = result.autoMuteAds !== false; // Default to true
-    console.log('[Hush Tab] Auto-mute enabled:', isAutoMuteEnabled);
 
     if (isAutoMuteEnabled) {
       startMonitoring();
@@ -64,7 +61,6 @@
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'sync' && changes.autoMuteAds) {
       isAutoMuteEnabled = changes.autoMuteAds.newValue;
-      console.log('[Hush Tab] Auto-mute setting changed:', isAutoMuteEnabled);
 
       if (isAutoMuteEnabled) {
         startMonitoring();
@@ -77,7 +73,6 @@
   // Listen for audible state changes from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'audibleStateChanged') {
-      console.log(`[Hush Tab] Received audible flicker notification (count: ${request.flickerCount})`);
 
       // Set flicker flag for confidence scoring
       recentAudibleFlicker = true;
@@ -100,7 +95,6 @@
 
     // Network-based ad detection signal from background script
     if (request.action === 'networkAdDetected') {
-      console.log(`[Hush Tab] YouTube received network ad signal: isAd=${request.isAd}`);
       networkAdActive = request.isAd;
 
       // Clear any existing timeout
@@ -130,8 +124,6 @@
   function startMonitoring() {
     if (checkInterval) return; // Already monitoring
 
-    console.log('[Hush Tab] Starting YouTube ad monitoring (confidence-based)');
-
     // Check immediately
     checkForAds();
 
@@ -146,7 +138,6 @@
     if (checkInterval) {
       clearInterval(checkInterval);
       checkInterval = null;
-      console.log('[Hush Tab] Stopped YouTube ad monitoring');
     }
   }
 
@@ -264,7 +255,6 @@
 
     // Log signal details periodically for debugging
     if (confidence !== lastConfidence) {
-      console.log(`[Hush Tab] Confidence: ${confidence} | Signals: ${signals.join(', ') || 'none'}`);
     }
 
     return confidence;
@@ -352,7 +342,6 @@
       // Not currently muted for ad, but confidence is high - MUTE
       currentAdState = true;
       lowConfidenceStartTime = null;
-      console.log(`[Hush Tab] AD DETECTED (confidence: ${confidence}) - Muting`);
       notifyBackgroundScript(true);
 
     } else if (currentAdState && confidence < CONFIG.UNMUTE_THRESHOLD) {
@@ -360,12 +349,10 @@
       if (lowConfidenceStartTime === null) {
         // Start tracking low confidence duration
         lowConfidenceStartTime = now;
-        console.log(`[Hush Tab] Confidence dropped to ${confidence}, waiting ${CONFIG.UNMUTE_DELAY_MS}ms before unmute`);
       } else if (now - lowConfidenceStartTime >= CONFIG.UNMUTE_DELAY_MS) {
         // Confidence has been low long enough - UNMUTE
         currentAdState = false;
         lowConfidenceStartTime = null;
-        console.log(`[Hush Tab] AD ENDED (confidence: ${confidence}) - Unmuting`);
         notifyBackgroundScript(false);
       }
       // Else: still waiting for delay
@@ -373,7 +360,6 @@
     } else if (currentAdState && confidence >= CONFIG.UNMUTE_THRESHOLD) {
       // Confidence went back up - reset the low confidence timer
       if (lowConfidenceStartTime !== null) {
-        console.log(`[Hush Tab] Confidence recovered to ${confidence}, canceling unmute`);
         lowConfidenceStartTime = null;
       }
     }
@@ -390,7 +376,6 @@
       confidence: lastConfidence
     }).catch(err => {
       // Extension context may be invalidated, ignore
-      console.log('[Hush Tab] Could not send message:', err);
     });
   }
 
@@ -459,7 +444,6 @@
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
-      console.log('[Hush Tab] YouTube navigation detected');
       // Reset state on navigation
       currentAdState = false;
       lowConfidenceStartTime = null;

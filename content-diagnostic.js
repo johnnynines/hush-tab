@@ -124,80 +124,41 @@
   // =========================================
   // NETWORK REQUEST CAPTURE
   // =========================================
+  // Uses PerformanceObserver to capture network activity from the page context.
+  // Content scripts run in an isolated world and cannot intercept the page's
+  // fetch/XHR calls directly. PerformanceObserver sees all resource loads
+  // regardless of JS context isolation.
+  const TRACKED_INITIATOR_TYPES = new Set([
+    'fetch', 'xmlhttprequest',  // Fetch/XHR
+    'script',                    // JS
+    'video', 'audio', 'media',  // Media
+  ]);
+
   function setupNetworkCapture() {
-    // Capture fetch requests
-    const originalFetch = window.fetch;
-    window.fetch = async function(input, init) {
-      const url = typeof input === 'string' ? input : input.url;
-      const method = init?.method || 'GET';
+    // Capture new resource loads in real-time
+    try {
+      const observer = new PerformanceObserver((list) => {
+        if (!diagnosticData.isRecording) return;
 
-      const startTime = relativeTime();
+        for (const entry of list.getEntries()) {
+          if (!TRACKED_INITIATOR_TYPES.has(entry.initiatorType)) continue;
 
-      try {
-        const response = await originalFetch.apply(this, arguments);
-
-        addEntry(diagnosticData.networkRequests, {
-          type: 'fetch',
-          method,
-          url: url.substring(0, 500),
-          status: response.status,
-          duration: relativeTime() - startTime,
-          isAdRelated: isAdRelatedUrl(url),
-        });
-
-        return response;
-      } catch (error) {
-        addEntry(diagnosticData.networkRequests, {
-          type: 'fetch',
-          method,
-          url: url.substring(0, 500),
-          error: error.message,
-          duration: relativeTime() - startTime,
-          isAdRelated: isAdRelatedUrl(url),
-        });
-        throw error;
-      }
-    };
-
-    // Capture XHR requests
-    const originalXHROpen = XMLHttpRequest.prototype.open;
-    const originalXHRSend = XMLHttpRequest.prototype.send;
-
-    XMLHttpRequest.prototype.open = function(method, url) {
-      this._diagnosticData = { method, url: String(url).substring(0, 500), startTime: null };
-      return originalXHROpen.apply(this, arguments);
-    };
-
-    XMLHttpRequest.prototype.send = function() {
-      if (this._diagnosticData) {
-        this._diagnosticData.startTime = relativeTime();
-
-        this.addEventListener('load', () => {
           addEntry(diagnosticData.networkRequests, {
-            type: 'xhr',
-            method: this._diagnosticData.method,
-            url: this._diagnosticData.url,
-            status: this.status,
-            duration: relativeTime() - this._diagnosticData.startTime,
-            isAdRelated: isAdRelatedUrl(this._diagnosticData.url),
+            type: entry.initiatorType,
+            url: entry.name.substring(0, 500),
+            duration: Math.round(entry.duration),
+            transferSize: entry.transferSize || 0,
+            isAdRelated: isAdRelatedUrl(entry.name),
           });
-        });
+        }
+      });
 
-        this.addEventListener('error', () => {
-          addEntry(diagnosticData.networkRequests, {
-            type: 'xhr',
-            method: this._diagnosticData.method,
-            url: this._diagnosticData.url,
-            error: 'Network error',
-            duration: relativeTime() - this._diagnosticData.startTime,
-            isAdRelated: isAdRelatedUrl(this._diagnosticData.url),
-          });
-        });
-      }
-      return originalXHRSend.apply(this, arguments);
-    };
+      observer.observe({ type: 'resource', buffered: false });
+    } catch (e) {
+      console.warn('[Hush Tab Diagnostic] PerformanceObserver not available:', e.message);
+    }
 
-    console.log('[Hush Tab Diagnostic] Network capture initialized');
+    console.log('[Hush Tab Diagnostic] Network capture initialized (PerformanceObserver)');
   }
 
   // Check if URL is ad-related
@@ -430,6 +391,8 @@
           state.huluPlayer = captureHuluPlayerState();
         } else if (diagnosticData.platform === 'espn') {
           state.espnPlayer = captureESPNPlayerState();
+        } else if (diagnosticData.platform === 'nbc') {
+          state.nbcPlayer = captureNBCPlayerState();
         }
 
         addEntry(diagnosticData.playerState, state);
@@ -533,6 +496,71 @@
         adCountdown: document.querySelector('[class*="ad-count"]')?.textContent,
         adBadge: document.querySelector('[class*="ad-badge"]')?.textContent,
         playerClasses: document.querySelector('[class*="player"]')?.className?.substring(0, 200),
+      };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
+  function captureNBCPlayerState() {
+    try {
+      // Check for Video.js player (NBC often uses this)
+      const vjsPlayer = document.querySelector('.video-js, .vjs-player');
+      const vjsAdPlaying = vjsPlayer?.classList.contains('vjs-ad-playing') ||
+                          vjsPlayer?.classList.contains('vjs-ad-loading');
+
+      // Check video duration (short = likely ad)
+      const video = document.querySelector('video');
+      const duration = video?.duration;
+      const isShortVideo = !isNaN(duration) && isFinite(duration) && duration >= 5 && duration <= 120;
+
+      // Check for ad overlays
+      const adOverlay = !!document.querySelector(
+        '[class*="ad-overlay"], [class*="adOverlay"], [class*="ad-container"], ' +
+        '[class*="adContainer"], [class*="commercial"], [class*="Commercial"]'
+      );
+
+      // Check for IMA SDK
+      const imaContainer = !!document.querySelector(
+        '[class*="ima-"], [id*="ima-"], [class*="google-ad"], .videoAdUi'
+      );
+
+      // Check for ad text patterns
+      let adTextFound = null;
+      const textContainers = document.querySelectorAll('[class*="ad"] *, [class*="overlay"] *');
+      for (const el of textContainers) {
+        const text = (el.textContent || '').trim();
+        if (text.length < 100) {
+          if (/ad\s*\d+\s*(of|\/)\s*\d+/i.test(text) ||
+              /commercial\s*break/i.test(text) ||
+              /your\s*(program|video|show)\s*will\s*(resume|continue)/i.test(text) ||
+              /\d+\s*seconds?\s*(remaining|left)/i.test(text)) {
+            adTextFound = text;
+            break;
+          }
+        }
+      }
+
+      // Check for disabled seek bar
+      const seekBar = document.querySelector(
+        '[class*="seek"], [class*="progress-bar"], [class*="scrubber"], .vjs-progress-holder'
+      );
+      const seekDisabled = seekBar && (
+        seekBar.hasAttribute('disabled') ||
+        seekBar.getAttribute('aria-disabled') === 'true' ||
+        seekBar.classList.contains('disabled')
+      );
+
+      return {
+        vjsPlayer: !!vjsPlayer,
+        vjsAdPlaying: vjsAdPlaying,
+        videoDuration: duration,
+        isShortVideo: isShortVideo,
+        adOverlay: adOverlay,
+        imaContainer: imaContainer,
+        adTextFound: adTextFound,
+        seekDisabled: seekDisabled,
+        playerClasses: vjsPlayer?.className?.substring(0, 200) || document.querySelector('[class*="player"]')?.className?.substring(0, 200),
       };
     } catch (e) {
       return { error: e.message };
