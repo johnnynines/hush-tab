@@ -40,6 +40,9 @@ const AD_NETWORK_CONFIG = {
     'innovid.com',         // Video ad platform
     'spotxchange.com',     // SpotX ads
     'springserve.com',     // Ad server
+    'mediatailor.us-east-1.amazonaws.com',  // NBC/AWS MediaTailor ad insertion
+    'nbcume.hb.omtrdc.net',                 // NBC Adobe Audience Manager / Analytics
+    'omtrdc.net',          // Adobe Marketing Cloud (used by NBC)
   ],
   // How long to consider ad "active" after last ad request (ms)
   AD_ACTIVITY_TIMEOUT_MS: 10000,
@@ -87,6 +90,9 @@ function setupNetworkAdDetection() {
         "*://*.springserve.com/*",
         "*://ads.espn.com/*",
         "*://ads.hulu.com/*",
+        "*://*.mediatailor.us-east-1.amazonaws.com/*",
+        "*://*.nbcume.hb.omtrdc.net/*",
+        "*://*.omtrdc.net/*",
       ],
       types: ["xmlhttprequest", "media", "script", "image", "other"]
     }
@@ -126,6 +132,7 @@ function handleAdNetworkRequest(details) {
 
     // If we have enough ad requests, consider ad as active
     if (activity.requestCount >= AD_NETWORK_CONFIG.MIN_AD_REQUESTS && !activity.isAdActive) {
+      console.log(`[Hush Tab] Network ad detected on tab ${tabId} (${activity.requestCount} requests)`);
       activity.isAdActive = true;
       handleNetworkAdDetected(tabId, true);
     }
@@ -141,6 +148,7 @@ function checkAdNetworkActivity() {
     if (activity.isAdActive) {
       const timeSinceLastRequest = now - activity.lastAdRequest;
       if (timeSinceLastRequest > AD_NETWORK_CONFIG.AD_ACTIVITY_TIMEOUT_MS) {
+        console.log(`[Hush Tab] Network ad ended on tab ${tabId} (timeout)`);
         activity.isAdActive = false;
         activity.requestCount = 0;
         handleNetworkAdDetected(tabId, false);
@@ -164,6 +172,8 @@ async function handleNetworkAdDetected(tabId, isAd) {
 
     if (!isSupportedSite) return;
 
+    console.log(`[Hush Tab] Sending network ad signal to tab ${tabId}: isAd=${isAd}`);
+
     // Send signal to content script to use as confidence data point
     await chrome.tabs.sendMessage(tabId, {
       action: 'networkAdDetected',
@@ -171,7 +181,7 @@ async function handleNetworkAdDetected(tabId, isAd) {
       timestamp: Date.now()
     });
   } catch (error) {
-    // Content script may not be loaded, ignore
+    console.error(`[Hush Tab] Error sending network ad signal to tab ${tabId}:`, error);
   }
 }
 
@@ -362,8 +372,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   // Handle ad state changes from content scripts
   if (request.action === 'adStateChanged') {
-    handleAdStateChange(sender.tab.id, request.isAd);
-    sendResponse({ success: true });
+    console.log(`[Hush Tab] Received adStateChanged from tab ${sender.tab.id}: isAd=${request.isAd}`);
+    handleAdStateChange(sender.tab.id, request.isAd)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => {
+        console.error('[Hush Tab] Error in handleAdStateChange:', error);
+        sendResponse({ success: false, error: error.message });
+      });
     return true;
   }
   
@@ -394,24 +409,31 @@ async function handleAdStateChange(tabId, isAd) {
     const autoMuteEnabled = settings.autoMuteAds !== false;
     
     if (!autoMuteEnabled) {
+      console.log(`[Hush Tab] Auto-mute disabled, ignoring ad state change`);
       return;
     }
     
     if (isAd) {
       // Ad started - mute the tab if not already muted
       if (!tab.mutedInfo.muted) {
+        console.log(`[Hush Tab] 🔇 Muting tab ${tabId} (ad detected)`);
         await chrome.tabs.update(tabId, { muted: true });
         autoMutedTabs.add(tabId);
+      } else {
+        console.log(`[Hush Tab] Tab ${tabId} already muted, skipping`);
       }
     } else {
       // Content resumed - unmute only if we auto-muted it
       if (autoMutedTabs.has(tabId)) {
+        console.log(`[Hush Tab] 🔊 Unmuting tab ${tabId} (content resumed)`);
         await chrome.tabs.update(tabId, { muted: false });
         autoMutedTabs.delete(tabId);
+      } else {
+        console.log(`[Hush Tab] Tab ${tabId} was not auto-muted, leaving mute state unchanged`);
       }
     }
   } catch (error) {
-    // Error handling ad state change
+    console.error(`[Hush Tab] Error handling ad state change:`, error);
   }
 }
 

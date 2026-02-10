@@ -6,7 +6,7 @@ A cross-browser extension for Firefox and Chrome that detects and manages tabs p
 
 🔊 **Real-time Audio Detection** - Automatically detects when tabs start or stop playing audio
 🎯 **Visual Badge Counter** - Shows the number of tabs playing audio on the extension icon
-🤖 **Smart Ad Muting** - Automatically mutes ads on YouTube, Hulu, and ESPN, then unmutes when content resumes
+🤖 **Smart Ad Muting** - Automatically mutes ads on YouTube, Hulu, ESPN, and NBC, then unmutes when content resumes
 🔇 **Quick Mute/Unmute** - Control audio for each tab individually
 👁️ **Instant Tab Switching** - Click to jump directly to any tab playing audio
 ⚙️ **Configurable Settings** - Toggle auto-mute on/off with one click

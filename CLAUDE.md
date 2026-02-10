@@ -169,6 +169,39 @@ Instead of boolean detection, the script calculates a confidence score (0-100) b
 | Seek disabled | 20 | Seek bar disabled during ad |
 | Audible flicker | 10 | Audio state changes detected |
 
+### 5. NBC Content Script (`content-nbc.js`)
+
+**Core Responsibilities:**
+- Injects into NBC pages (`*://*.nbc.com/*`, `*://*.nbcuni.com/*`)
+- Uses confidence-based scoring with emphasis on network and control visibility signals
+- Handles NBC's unique ad delivery via AWS MediaTailor
+
+**NBC-Specific Detection Signals (Updated with Diagnostic Data):**
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| Network ad detected | 45 | AWS MediaTailor + Adobe Analytics activity (strongest signal) |
+| Player controls hidden | 35 | Back-10 and back-to-live buttons removed during ads |
+| Progress bar hidden | 30 | `.player-controls__progress-wrapper--hidden` class added |
+| Back-to-live hidden | 25 | `.player-controls__back-to-live__wrapper` not visible |
+| Short video duration | 40 | Video duration is ad-length (5-120 seconds) |
+| Ad playing state | 45 | Player reports ad playing |
+| Ad overlay visible | 40 | Ad container/overlay present |
+| Ad countdown text | 40 | Countdown or "Ad" text visible |
+| Ad break indicator | 35 | Ad break indicator in UI |
+| Ad badge visible | 30 | "Ad" or "Commercial" badge |
+| Video time frozen | 20 | currentTime not advancing |
+| Seek disabled | 20 | Seek bar disabled during ad |
+| Audible flicker | 10 | Audio state changes detected |
+
+**NBC Detection Strategy:**
+NBC presents unique challenges as ads don't appear as separate short-duration videos. The platform uses:
+- **AWS MediaTailor** for server-side ad insertion (`mediatailor.us-east-1.amazonaws.com`)
+- **Adobe Analytics** for tracking (`nbcume.hb.omtrdc.net`, `omtrdc.net`)
+- **Player control visibility changes** - controls are hidden/disabled during ads
+
+The confidence threshold is set to 50 (vs 60 for other platforms) since fewer DOM signals are available. Network activity combined with control visibility provides reliable ad detection.
+
 ### 5. Popup Interface (`popup.html`, `popup.js`, `popup.css`)
 
 **Core Responsibilities:**

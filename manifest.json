@@ -38,35 +38,21 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/*"],
-      "js": ["content-youtube.js"],
-      "run_at": "document_end"
-    },
-    {
-      "matches": ["*://*.hulu.com/*"],
-      "js": ["content-hulu.js"],
-      "run_at": "document_end"
-    },
-    {
       "matches": [
+        "*://*.youtube.com/*",
+        "*://*.hulu.com/*",
         "*://*.espn.com/*",
         "*://plus.espn.com/*",
         "*://watch.espn.com/*",
-        "*://*.bamgrid.com/*",
-        "*://*.bamtech.co/*",
-        "*://*.espncdn.com/*",
-        "*://*.disneystreaming.com/*"
-      ],
-      "js": ["content-espn.js"],
-      "run_at": "document_end",
-      "all_frames": true
-    },
-    {
-      "matches": [
         "*://*.nbc.com/*",
-        "*://*.nbcuni.com/*"
+        "*://*.nbcuni.com/*",
+        "*://*.cbs.com/*",
+        "*://*.paramountplus.com/*",
+        "*://*.max.com/*",
+        "*://*.hbomax.com/*",
+        "*://*.peacocktv.com/*"
       ],
-      "js": ["content-nbc.js"],
+      "js": ["content-unified.js"],
       "run_at": "document_end",
       "all_frames": true
     }

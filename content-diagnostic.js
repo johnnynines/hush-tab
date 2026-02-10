@@ -14,9 +14,10 @@
 
   // Configuration
   const CONFIG = {
-    MAX_ENTRIES: 500,           // Max entries to store per category
-    DOM_DEBOUNCE_MS: 100,       // Debounce DOM mutation logging
+    MAX_ENTRIES: 1000,          // Max entries to store per category (increased)
+    DOM_DEBOUNCE_MS: 50,        // Faster DOM mutation capture
     VIDEO_POLL_INTERVAL_MS: 500, // Poll video state every 500ms
+    ELEMENT_SNAPSHOT_INTERVAL_MS: 1000, // Snapshot key elements every second
   };
 
   // Data storage
@@ -26,6 +27,8 @@
     domMutations: [],
     videoEvents: [],
     playerState: [],
+    elementSnapshots: [],      // NEW: Track element visibility over time
+    userMarkers: [],           // User-marked ad start/end points
     startTime: Date.now(),
     platform: detectPlatform(),
     isRecording: false,
