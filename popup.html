@@ -3,43 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Audio Tab Detector</title>
+  <title>Hush Tab Diagnostic</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>🔊 Audio Tabs</h1>
+      <h1>Hush Tab</h1>
       <p class="subtitle">Tabs currently playing audio</p>
-      
-      <div class="settings-bar">
-        <label class="toggle-switch">
-          <input type="checkbox" id="auto-mute-toggle">
-          <span class="slider"></span>
-        </label>
-        <span class="setting-label">Auto-mute ads</span>
-      </div>
 
       <div class="diagnostic-link">
         <a href="diagnostic.html" id="open-diagnostic">Diagnostic Tool</a>
       </div>
     </header>
-    
+
     <main>
       <div id="loading" class="loading">
         <div class="spinner"></div>
         <p>Scanning tabs...</p>
       </div>
-      
+
       <div id="no-audio" class="no-audio" style="display: none;">
-        <div class="icon">🔇</div>
+        <div class="icon">Silent</div>
         <p>No tabs are currently playing audio</p>
       </div>
-      
+
       <div id="tabs-list" class="tabs-list"></div>
     </main>
   </div>
-  
+
   <script src="popup.js"></script>
 </body>
 </html>

@@ -38,8 +38,7 @@ const elements = {
   summaryContent: document.getElementById('summary-content'),
 };
 
-// Supported streaming sites
-const SUPPORTED_SITES = ['youtube.com', 'hulu.com', 'espn.com', 'nbc.com'];
+// No site restriction - diagnostic can be used on any tab with a URL
 
 async function initializeDiagnosticPanel() {
   await loadSupportedTabs();
@@ -47,34 +46,35 @@ async function initializeDiagnosticPanel() {
   setupViewerTabs();
 }
 
-// Load tabs that are on supported streaming sites
+// Load all tabs with URLs (excluding internal browser pages)
 async function loadSupportedTabs() {
   const tabs = await chrome.tabs.query({});
-  const supportedTabs = tabs.filter(tab => {
-    return tab.url && SUPPORTED_SITES.some(site => tab.url.includes(site));
+  const browsableTabs = tabs.filter(tab => {
+    return tab.url && (tab.url.startsWith('http://') || tab.url.startsWith('https://'));
   });
 
   elements.tabSelector.innerHTML = '<option value="">-- Select a tab --</option>';
 
-  supportedTabs.forEach(tab => {
+  browsableTabs.forEach(tab => {
     const option = document.createElement('option');
     option.value = tab.id;
 
-    // Determine platform
-    let platform = 'Unknown';
-    if (tab.url.includes('youtube.com')) platform = 'YouTube';
-    else if (tab.url.includes('hulu.com')) platform = 'Hulu';
-    else if (tab.url.includes('espn.com')) platform = 'ESPN';
-    else if (tab.url.includes('nbc.com')) platform = 'NBC';
+    // Extract domain for display
+    let domain = 'Unknown';
+    try {
+      domain = new URL(tab.url).hostname;
+    } catch (e) {
+      // ignore
+    }
 
-    option.textContent = `[${platform}] ${tab.title?.substring(0, 50) || 'Untitled'}`;
+    option.textContent = `[${domain}] ${tab.title?.substring(0, 50) || 'Untitled'}`;
     elements.tabSelector.appendChild(option);
   });
 
-  if (supportedTabs.length === 0) {
+  if (browsableTabs.length === 0) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = 'No supported streaming tabs found';
+    option.textContent = 'No browsable tabs found';
     option.disabled = true;
     elements.tabSelector.appendChild(option);
   }
