@@ -27,12 +27,17 @@
     domMutations: [],
     videoEvents: [],
     playerState: [],
-    elementSnapshots: [],      // NEW: Track element visibility over time
-    userMarkers: [],           // User-marked ad start/end points
+    audioSignals: [],          // Volume changes, silence, discontinuities
+    elementSnapshots: [],
+    userMarkers: [],
     startTime: Date.now(),
     platform: detectPlatform(),
     isRecording: false,
   };
+
+  // Track previous video state for detecting discontinuities
+  // Keyed by a stable identifier per video element
+  const previousVideoState = new Map();
 
   // Detect which platform we're on
   function detectPlatform() {
@@ -184,38 +189,102 @@
     let pendingMutations = [];
     let debounceTimer = null;
 
-    // Selectors that are interesting for ad detection
-    const interestingSelectors = [
-      // YouTube
-      '.ad-showing', '.ad-interrupting', '.ytp-ad', '.video-ads',
-      // Hulu
-      '.ad-', 'ad-break', 'commercial', '.controls__ad',
-      // ESPN
-      '.ima-', 'google-ima', '.ad-container', '.ad-overlay',
-      // Generic
-      '[class*="ad"]', '[class*="Ad"]', '[id*="ad"]', '[id*="Ad"]',
-      '[data-ad]', '.advertisement', '.commercial',
+    // Patterns that indicate ad-related elements. Uses word-boundary-aware
+    // matching to avoid false positives from substrings like "loading",
+    // "padding", "shadow", "header", etc.
+    const AD_PATTERNS = [
+      // Word-boundary regex patterns for ad-related terms
+      /\bad[s]?\b/i,          // "ad", "ads" as whole words
+      /\bad[-_]/i,            // "ad-showing", "ad_container", etc.
+      /[-_]ad\b/i,            // "video-ad", "pre_ad", etc.
+      /\bcommercial/i,        // "commercial", "commercial-break"
+      /\bima[-_]/i,           // "ima-ad-container", "ima_sdk"
+      /\bsponsor/i,           // "sponsor", "sponsored"
+      /\bytp-ad/i,            // YouTube-specific "ytp-ad-*"
+      /\bvideo-ads?\b/i,      // "video-ad", "video-ads"
+      /\bvjs-ad/i,            // Video.js "vjs-ad-playing"
+      /\bad-showing\b/i,      // YouTube "ad-showing"
+      /\bad-interrupting\b/i, // YouTube "ad-interrupting"
+      /\bcontrols__ad/i,      // Hulu "controls__ad-break"
+      /\bgoogle-ima/i,        // ESPN/generic Google IMA
+      /\badvertis/i,          // "advertisement", "advertising"
     ];
 
+    // Selectors for interesting elements in childList mutations
+    const interestingSelectors = [
+      // YouTube
+      '.ad-showing', '.ad-interrupting', '[class*="ytp-ad"]', '.video-ads',
+      // Hulu
+      '[class*="ad-break"]', '[class*="controls__ad"]',
+      // ESPN
+      '[class*="ima-"]', '.google-ima', '[class*="ad-container"]', '[class*="ad-overlay"]',
+      // NBC
+      '.vjs-ad-playing', '.vjs-ad-loading', '[class*="player-controls"]',
+      // Generic
+      '[data-ad]', '[data-ad-state]', '.advertisement', '.commercial',
+    ];
+
+    // Test if a string contains ad-related patterns using word-boundary matching
+    function containsAdPattern(str) {
+      if (!str) return false;
+      return AD_PATTERNS.some(pattern => pattern.test(str));
+    }
+
+    // Check if a class change is interesting by examining BOTH old and new values.
+    // This is critical: when an element transitions FROM a non-ad state TO an ad
+    // state (e.g., gaining "ad-showing"), the OLD class string won't contain "ad"
+    // but the NEW one will. We must check both directions.
+    function isInterestingClassChange(oldVal, newVal) {
+      // Check if either the old or new class string contains ad patterns
+      if (containsAdPattern(oldVal) || containsAdPattern(newVal)) {
+        return true;
+      }
+
+      // Also check for player/video elements -- we want to track class changes
+      // on the video player container itself even if the classes don't say "ad"
+      // because these are the elements that GET ad classes added to them
+      const combined = (oldVal + ' ' + newVal).toLowerCase();
+      if (combined.includes('player') || combined.includes('video-js') ||
+          combined.includes('html5-video') || combined.includes('vjs-')) {
+        return true;
+      }
+
+      return false;
+    }
+
+    // Check if a non-class attribute mutation is interesting
     function isInterestingMutation(mutation) {
       const target = mutation.target;
       if (!target || !target.classList) return false;
 
-      // Check if class/id contains interesting patterns
+      // For attribute mutations, check the element's identity and the
+      // old/new attribute values
       const classStr = target.className?.toString() || '';
       const idStr = target.id || '';
-      const combined = (classStr + ' ' + idStr).toLowerCase();
+      const oldAttrVal = mutation.oldValue || '';
+      const newAttrVal = target.getAttribute(mutation.attributeName) || '';
 
-      // Check for ad-related patterns
-      if (combined.includes('ad') || combined.includes('commercial') ||
-          combined.includes('ima') || combined.includes('sponsor')) {
+      // Check element identity (class/id)
+      if (containsAdPattern(classStr) || containsAdPattern(idStr)) {
         return true;
       }
 
-      // Check if any interesting selector matches
+      // Check attribute values themselves
+      if (containsAdPattern(oldAttrVal) || containsAdPattern(newAttrVal)) {
+        return true;
+      }
+
+      // Check for player/video elements that may receive ad state changes
+      const combined = (classStr + ' ' + idStr).toLowerCase();
+      if (combined.includes('player') || combined.includes('video') ||
+          combined.includes('controls') || combined.includes('progress')) {
+        return true;
+      }
+
+      // Check if any interesting selector matches the target
       try {
         for (const selector of interestingSelectors) {
-          if (target.matches?.(selector) || target.querySelector?.(selector)) {
+          if (target.matches?.(selector)) {
             return true;
           }
         }
@@ -252,6 +321,25 @@
                   ...info,
                 });
               }
+              // Also check children of added nodes for interesting elements
+              try {
+                for (const selector of interestingSelectors) {
+                  const matches = node.querySelectorAll?.(selector);
+                  if (matches) {
+                    matches.forEach(match => {
+                      const matchInfo = describeElement(match);
+                      if (matchInfo.isInteresting) {
+                        summary.interestingElements.push({
+                          action: 'added (child)',
+                          ...matchInfo,
+                        });
+                      }
+                    });
+                  }
+                }
+              } catch {
+                // Ignore selector errors on detached nodes
+              }
             }
           });
 
@@ -275,18 +363,31 @@
             const oldVal = mutation.oldValue || '';
             const newVal = target.className?.toString() || '';
             if (oldVal !== newVal) {
-              summary.classChanges.push({
-                element: describeElement(target),
-                oldClasses: oldVal.substring(0, 200),
-                newClasses: newVal.substring(0, 200),
-              });
+              // Filter: only record class changes that are interesting.
+              // Check both old and new values so we catch transitions in
+              // both directions (gaining ad classes AND losing them).
+              if (isInterestingClassChange(oldVal, newVal)) {
+                // Compute the actual diff for clearer output
+                const oldSet = new Set(oldVal.split(/\s+/).filter(Boolean));
+                const newSet = new Set(newVal.split(/\s+/).filter(Boolean));
+                const added = [...newSet].filter(c => !oldSet.has(c));
+                const removed = [...oldSet].filter(c => !newSet.has(c));
+
+                summary.classChanges.push({
+                  element: describeElement(target),
+                  oldClasses: oldVal.substring(0, 300),
+                  newClasses: newVal.substring(0, 300),
+                  addedClasses: added,
+                  removedClasses: removed,
+                });
+              }
             }
           } else if (isInterestingMutation(mutation)) {
             summary.attributeChanges.push({
               element: describeElement(target),
               attribute: attrName,
-              oldValue: String(mutation.oldValue).substring(0, 100),
-              newValue: String(target.getAttribute(attrName)).substring(0, 100),
+              oldValue: String(mutation.oldValue).substring(0, 200),
+              newValue: String(target.getAttribute(attrName)).substring(0, 200),
             });
           }
         }
@@ -312,15 +413,19 @@
 
       // Get data attributes
       if (element.dataset) {
-        Object.keys(element.dataset).slice(0, 5).forEach(key => {
+        Object.keys(element.dataset).slice(0, 10).forEach(key => {
           dataAttrs[key] = String(element.dataset[key]).substring(0, 50);
         });
       }
 
+      // Use word-boundary-aware matching rather than naive .includes('ad')
+      // to avoid false positives from "loading", "padding", "shadow", etc.
+      const isAdRelated = containsAdPattern(id) || containsAdPattern(classes);
       const combined = (tag + ' ' + id + ' ' + classes).toLowerCase();
-      const isInteresting = combined.includes('ad') || combined.includes('player') ||
-                           combined.includes('video') || combined.includes('commercial') ||
-                           combined.includes('ima') || combined.includes('sponsor');
+      const isPlayerRelated = combined.includes('player') || combined.includes('video') ||
+                              combined.includes('controls') || tag === 'video';
+      const isInteresting = isAdRelated || isPlayerRelated ||
+                           containsAdPattern(combined);
 
       return {
         tag,
@@ -328,6 +433,7 @@
         classes: classes.substring(0, 200),
         dataAttrs,
         isInteresting,
+        isAdRelated,
         textContent: element.textContent?.substring(0, 100)?.trim(),
       };
     }
@@ -341,12 +447,31 @@
       debounceTimer = setTimeout(processMutations, CONFIG.DOM_DEBOUNCE_MS);
     });
 
+    // Observe a broader set of attributes to capture all ad-related state changes.
+    // Streaming platforms use various data attributes and ARIA attributes to
+    // communicate ad state, seek-bar disablement, and player mode changes.
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeOldValue: true,
-      attributeFilter: ['class', 'style', 'hidden', 'data-ad-state', 'data-playing'],
+      attributeFilter: [
+        'class',              // Class changes (ad-showing, vjs-ad-playing, etc.)
+        'style',              // Visibility/display changes during ads
+        'hidden',             // Elements hidden/shown during ads
+        'disabled',           // Controls disabled during ads
+        'src',                // Video source changes (ad vs content)
+        'data-ad-state',      // Generic ad state
+        'data-ad',            // Generic ad flag
+        'data-ad-break',      // Hulu ad break markers
+        'data-playing',       // Player state
+        'data-state',         // Generic player state
+        'aria-label',         // Accessible labels (often contain "ad" text)
+        'aria-disabled',      // Seek bar disabled during ads (NBC/Hulu)
+        'aria-hidden',        // Elements aria-hidden during ad transitions
+        'aria-valuenow',      // Progress bar value changes
+        'aria-valuemax',      // Progress bar max (changes with ad vs content duration)
+      ],
     });
 
     console.log('[Hush Tab Diagnostic] DOM mutation capture initialized');
@@ -359,6 +484,11 @@
     let videoElements = [];
     let pollInterval = null;
 
+    // Get a stable key for a video element across polls
+    function getVideoKey(video, index) {
+      return video.id || video.getAttribute('data-video-id') || `video-${index}`;
+    }
+
     function findVideoElements() {
       videoElements = Array.from(document.querySelectorAll('video'));
     }
@@ -369,6 +499,10 @@
       findVideoElements();
 
       videoElements.forEach((video, index) => {
+        const key = getVideoKey(video, index);
+        const prev = previousVideoState.get(key);
+        const currentSrc = video.src?.substring(0, 200) || video.currentSrc?.substring(0, 200);
+
         const state = {
           index,
           currentTime: video.currentTime,
@@ -376,7 +510,7 @@
           paused: video.paused,
           muted: video.muted,
           volume: video.volume,
-          src: video.src?.substring(0, 200) || video.currentSrc?.substring(0, 200),
+          src: currentSrc,
           readyState: video.readyState,
           networkState: video.networkState,
           buffered: video.buffered.length > 0 ? {
@@ -386,6 +520,79 @@
           parentClasses: video.parentElement?.className?.substring(0, 100),
           videoId: video.id || video.getAttribute('data-video-id'),
         };
+
+        // ---- Discontinuity & change detection ----
+        if (prev) {
+          const timeDelta = video.currentTime - prev.currentTime;
+          const expectedDelta = CONFIG.VIDEO_POLL_INTERVAL_MS / 1000;
+
+          // currentTime jump detection: time moved backward, or jumped
+          // forward much more than one poll interval would explain
+          if (!video.paused && !video.seeking) {
+            if (timeDelta < -0.5) {
+              addEntry(diagnosticData.audioSignals, {
+                signal: 'TIME_JUMP_BACKWARD',
+                videoKey: key,
+                from: prev.currentTime,
+                to: video.currentTime,
+                delta: timeDelta,
+                note: 'currentTime jumped backward (possible ad segment loaded)',
+              });
+            } else if (timeDelta > expectedDelta * 3 && timeDelta > 2) {
+              addEntry(diagnosticData.audioSignals, {
+                signal: 'TIME_JUMP_FORWARD',
+                videoKey: key,
+                from: prev.currentTime,
+                to: video.currentTime,
+                delta: timeDelta,
+                note: 'currentTime jumped forward unexpectedly',
+              });
+            }
+
+            // Time stall: video not paused but time hasn't moved
+            if (Math.abs(timeDelta) < 0.01 && prev.readyState >= 2) {
+              addEntry(diagnosticData.audioSignals, {
+                signal: 'TIME_STALLED',
+                videoKey: key,
+                currentTime: video.currentTime,
+                note: 'Video not paused but time is not advancing',
+              });
+            }
+          }
+
+          // Duration change detection: ad segments often have different duration
+          if (prev.duration !== video.duration &&
+              isFinite(video.duration) && isFinite(prev.duration)) {
+            addEntry(diagnosticData.audioSignals, {
+              signal: 'DURATION_CHANGED',
+              videoKey: key,
+              from: prev.duration,
+              to: video.duration,
+              note: `Duration changed from ${prev.duration.toFixed(1)}s to ${video.duration.toFixed(1)}s`,
+            });
+          }
+
+          // Source change detection
+          if (prev.src !== currentSrc && currentSrc) {
+            addEntry(diagnosticData.audioSignals, {
+              signal: 'SOURCE_CHANGED',
+              videoKey: key,
+              from: prev.src?.substring(0, 100),
+              to: currentSrc.substring(0, 100),
+              note: 'Video source URL changed',
+            });
+          }
+        }
+
+        // Save current state for next comparison
+        previousVideoState.set(key, {
+          currentTime: video.currentTime,
+          duration: video.duration,
+          src: currentSrc,
+          readyState: video.readyState,
+          volume: video.volume,
+          muted: video.muted,
+        });
 
         // Platform-specific state
         if (diagnosticData.platform === 'youtube') {
@@ -403,19 +610,82 @@
     }
 
     function setupVideoEventListeners(video) {
+      // Prevent double-attaching listeners
+      if (video.__hushTabListenersAttached) return;
+      video.__hushTabListenersAttached = true;
+
+      // Track previous volume/muted state for richer volumechange events
+      let prevVolume = video.volume;
+      let prevMuted = video.muted;
+      let prevSrc = video.src || video.currentSrc;
+
       const events = ['play', 'pause', 'seeking', 'seeked', 'ended', 'error',
                       'loadstart', 'loadedmetadata', 'waiting', 'playing',
-                      'volumechange', 'ratechange'];
+                      'ratechange', 'emptied', 'durationchange'];
 
       events.forEach(eventName => {
-        video.addEventListener(eventName, (e) => {
-          addEntry(diagnosticData.videoEvents, {
+        video.addEventListener(eventName, () => {
+          const entry = {
             event: eventName,
             currentTime: video.currentTime,
             duration: video.duration,
             src: video.src?.substring(0, 100),
-          });
+          };
+
+          // Extra context for specific events
+          if (eventName === 'durationchange') {
+            entry.newDuration = video.duration;
+            entry.note = `Duration is now ${isFinite(video.duration) ? video.duration.toFixed(1) + 's' : 'Infinity'}`;
+          }
+          if (eventName === 'emptied') {
+            entry.note = 'Media element reset (source removed or changed)';
+          }
+          if (eventName === 'loadstart') {
+            entry.newSrc = video.src?.substring(0, 200) || video.currentSrc?.substring(0, 200);
+            if (prevSrc && prevSrc !== entry.newSrc) {
+              entry.note = 'New source loading (source changed)';
+              entry.previousSrc = prevSrc.substring(0, 100);
+            }
+            prevSrc = entry.newSrc;
+          }
+
+          addEntry(diagnosticData.videoEvents, entry);
         });
+      });
+
+      // Dedicated volumechange handler with old/new tracking
+      video.addEventListener('volumechange', () => {
+        const volumeChanged = prevVolume !== video.volume;
+        const mutedChanged = prevMuted !== video.muted;
+
+        addEntry(diagnosticData.videoEvents, {
+          event: 'volumechange',
+          currentTime: video.currentTime,
+          duration: video.duration,
+          src: video.src?.substring(0, 100),
+          oldVolume: prevVolume,
+          newVolume: video.volume,
+          oldMuted: prevMuted,
+          newMuted: video.muted,
+        });
+
+        // Also log as an audio signal for easier correlation
+        if (volumeChanged || mutedChanged) {
+          addEntry(diagnosticData.audioSignals, {
+            signal: 'VOLUME_CHANGED',
+            videoKey: video.id || 'unknown',
+            oldVolume: prevVolume,
+            newVolume: video.volume,
+            oldMuted: prevMuted,
+            newMuted: video.muted,
+            note: mutedChanged
+              ? `Muted: ${prevMuted} -> ${video.muted}`
+              : `Volume: ${prevVolume.toFixed(2)} -> ${video.volume.toFixed(2)}`,
+          });
+        }
+
+        prevVolume = video.volume;
+        prevMuted = video.muted;
       });
     }
 
@@ -621,6 +891,8 @@
         diagnosticData.domMutations = [];
         diagnosticData.videoEvents = [];
         diagnosticData.playerState = [];
+        diagnosticData.audioSignals = [];
+        previousVideoState.clear();
         console.log('[Hush Tab Diagnostic] Recording started');
         sendResponse({ success: true, platform: diagnosticData.platform });
         return true;
@@ -656,6 +928,7 @@
             domMutations: diagnosticData.domMutations.length,
             videoEvents: diagnosticData.videoEvents.length,
             playerState: diagnosticData.playerState.length,
+            audioSignals: diagnosticData.audioSignals.length,
           },
         });
         return true;

@@ -267,7 +267,7 @@ h4 {
 /* Stats Section */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
 }
 
@@ -539,6 +539,53 @@ h4 {
 
 .class-change .new {
   color: #4ec9b0;
+}
+
+.classes-added {
+  color: #4ec9b0;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.classes-removed {
+  color: #f48771;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.class-change details {
+  margin-top: 2px;
+}
+
+.class-change summary {
+  color: #888;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+/* Audio signal log specific */
+.log-signal-type {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.log-audio .log-signal-type { color: #c586c0; }
+.log-audio-volume .log-signal-type { color: #dcdcaa; }
+.log-audio-time .log-signal-type { color: #f48771; }
+.log-audio-duration .log-signal-type { color: #4ec9b0; }
+.log-audio-source .log-signal-type { color: #9cdcfe; }
+
+.log-audio-time {
+  background: rgba(244, 135, 113, 0.08);
+}
+
+.log-audio-source {
+  background: rgba(156, 220, 254, 0.08);
+}
+
+.log-size {
+  color: #888;
+  margin-left: 8px;
 }
 
 /* Player log specific */

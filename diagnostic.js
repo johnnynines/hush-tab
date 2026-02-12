@@ -29,12 +29,14 @@ const elements = {
   statDom: document.getElementById('stat-dom'),
   statVideo: document.getElementById('stat-video'),
   statPlayer: document.getElementById('stat-player'),
+  statAudio: document.getElementById('stat-audio'),
   // Log containers
   consoleLogContainer: document.getElementById('console-log-container'),
   networkLogContainer: document.getElementById('network-log-container'),
   domLogContainer: document.getElementById('dom-log-container'),
   videoLogContainer: document.getElementById('video-log-container'),
   playerLogContainer: document.getElementById('player-log-container'),
+  audioLogContainer: document.getElementById('audio-log-container'),
   summaryContent: document.getElementById('summary-content'),
 };
 
@@ -262,6 +264,7 @@ function updateStats() {
   elements.statDom.textContent = diagnosticData.domMutations?.length || 0;
   elements.statVideo.textContent = diagnosticData.videoEvents?.length || 0;
   elements.statPlayer.textContent = diagnosticData.playerState?.length || 0;
+  elements.statAudio.textContent = diagnosticData.audioSignals?.length || 0;
 }
 
 function updateLogViews() {
@@ -272,6 +275,7 @@ function updateLogViews() {
   refreshDomView();
   refreshVideoView();
   refreshPlayerView();
+  refreshAudioView();
 }
 
 function clearLogContainers() {
@@ -280,6 +284,7 @@ function clearLogContainers() {
   elements.domLogContainer.innerHTML = '';
   elements.videoLogContainer.innerHTML = '';
   elements.playerLogContainer.innerHTML = '';
+  elements.audioLogContainer.innerHTML = '';
   elements.summaryContent.innerHTML = '<p class="placeholder">Recording in progress...</p>';
 }
 
@@ -353,11 +358,17 @@ function refreshDomView() {
     if (mutation.classChanges?.length > 0) {
       html += `<div class="class-changes">`;
       mutation.classChanges.forEach(change => {
+        const elementDesc = change.element ? `&lt;${change.element.tag}${change.element.id ? ` id="${escapeHtml(change.element.id)}"` : ''}&gt;` : '';
+        const addedStr = change.addedClasses?.length > 0 ? `<span class="classes-added">+ ${escapeHtml(change.addedClasses.join(', '))}</span>` : '';
+        const removedStr = change.removedClasses?.length > 0 ? `<span class="classes-removed">- ${escapeHtml(change.removedClasses.join(', '))}</span>` : '';
         html += `<div class="class-change">
-          <span class="label">Class change:</span>
-          <span class="old">${escapeHtml(change.oldClasses)}</span>
-          <span class="arrow">&rarr;</span>
-          <span class="new">${escapeHtml(change.newClasses)}</span>
+          <span class="label">Class change on ${elementDesc}:</span>
+          ${addedStr}${removedStr}
+          <details><summary>Full classes</summary>
+            <span class="old">${escapeHtml(change.oldClasses)}</span>
+            <span class="arrow">&rarr;</span>
+            <span class="new">${escapeHtml(change.newClasses)}</span>
+          </details>
         </div>`;
       });
       html += `</div>`;
@@ -452,6 +463,43 @@ function refreshPlayerView() {
   elements.playerLogContainer.scrollTop = elements.playerLogContainer.scrollHeight;
 }
 
+function refreshAudioView() {
+  if (!diagnosticData?.audioSignals) return;
+
+  elements.audioLogContainer.innerHTML = diagnosticData.audioSignals.slice(-100).map(signal => {
+    // Color-code by signal type
+    let signalClass = 'log-audio';
+    if (signal.signal === 'VOLUME_CHANGED') signalClass = 'log-audio-volume';
+    else if (signal.signal.includes('TIME_')) signalClass = 'log-audio-time';
+    else if (signal.signal === 'DURATION_CHANGED') signalClass = 'log-audio-duration';
+    else if (signal.signal === 'SOURCE_CHANGED') signalClass = 'log-audio-source';
+
+    let details = '';
+    if (signal.signal === 'VOLUME_CHANGED') {
+      details = `vol: ${signal.oldVolume?.toFixed(2)} -> ${signal.newVolume?.toFixed(2)}, muted: ${signal.oldMuted} -> ${signal.newMuted}`;
+    } else if (signal.signal === 'DURATION_CHANGED') {
+      details = `${signal.from?.toFixed(1)}s -> ${signal.to?.toFixed(1)}s`;
+    } else if (signal.signal === 'SOURCE_CHANGED') {
+      details = `${escapeHtml(signal.from || '(none)')} -> ${escapeHtml(signal.to || '(none)')}`;
+    } else if (signal.signal.includes('TIME_JUMP')) {
+      details = `${signal.from?.toFixed(2)}s -> ${signal.to?.toFixed(2)}s (delta: ${signal.delta?.toFixed(2)}s)`;
+    } else if (signal.signal === 'TIME_STALLED') {
+      details = `at ${signal.currentTime?.toFixed(2)}s`;
+    }
+
+    return `
+      <div class="log-entry ${signalClass}">
+        <span class="log-time">${formatTime(signal.timestamp)}</span>
+        <span class="log-signal-type">${signal.signal}</span>
+        <span class="log-detail">${details}</span>
+        ${signal.note ? `<span class="log-note">${escapeHtml(signal.note)}</span>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  elements.audioLogContainer.scrollTop = elements.audioLogContainer.scrollHeight;
+}
+
 function generateSummary() {
   if (!diagnosticData) {
     elements.summaryContent.innerHTML = '<p class="placeholder">No data to analyze</p>';
@@ -502,6 +550,17 @@ function generateSummary() {
     </div>
 
     <div class="summary-section">
+      <h4>Audio Signals</h4>
+      ${summary.audioSignals.length > 0 ? `
+        <ul>
+          ${summary.audioSignals.map(s => `
+            <li><strong>${s.signal}</strong>: ${s.count}x</li>
+          `).join('')}
+        </ul>
+      ` : '<p>No audio signals detected</p>'}
+    </div>
+
+    <div class="summary-section">
       <h4>Interesting DOM Classes</h4>
       ${summary.interestingClasses.length > 0 ? `
         <ul>
@@ -538,6 +597,7 @@ function analyzeDiagnosticData(data) {
   const summary = {
     adNetworkRequests: [],
     adSignals: [],
+    audioSignals: [],
     userMarkers: [],
     interestingClasses: [],
     consolePatterns: [],
@@ -582,6 +642,34 @@ function analyzeDiagnosticData(data) {
     if (state.nbcPlayer?.seekDisabled) adSignalsSet.add('NBC: Seek bar disabled');
   });
   summary.adSignals = Array.from(adSignalsSet).map(desc => ({ type: 'Player State', description: desc }));
+
+  // Analyze audio signals
+  const audioSignalCounts = {};
+  data.audioSignals?.forEach(signal => {
+    audioSignalCounts[signal.signal] = (audioSignalCounts[signal.signal] || 0) + 1;
+  });
+  summary.audioSignals = Object.entries(audioSignalCounts)
+    .map(([signal, count]) => ({ signal, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Add audio signals to the ad signals list
+  if (audioSignalCounts['DURATION_CHANGED']) {
+    adSignalsSet.add(`Audio: Duration changed ${audioSignalCounts['DURATION_CHANGED']}x (possible ad segment loading)`);
+  }
+  if (audioSignalCounts['SOURCE_CHANGED']) {
+    adSignalsSet.add(`Audio: Video source changed ${audioSignalCounts['SOURCE_CHANGED']}x`);
+  }
+  if (audioSignalCounts['TIME_JUMP_BACKWARD']) {
+    adSignalsSet.add(`Audio: Time jumped backward ${audioSignalCounts['TIME_JUMP_BACKWARD']}x (possible ad segment)`);
+  }
+  if (audioSignalCounts['TIME_STALLED']) {
+    adSignalsSet.add(`Audio: Time stalled ${audioSignalCounts['TIME_STALLED']}x`);
+  }
+  if (audioSignalCounts['VOLUME_CHANGED']) {
+    adSignalsSet.add(`Audio: Volume changed ${audioSignalCounts['VOLUME_CHANGED']}x`);
+  }
+  // Rebuild adSignals with the audio entries included
+  summary.adSignals = Array.from(adSignalsSet).map(desc => ({ type: desc.startsWith('Audio:') ? 'Audio' : 'Player State', description: desc }));
 
   // Collect interesting classes from DOM mutations
   const classesSet = new Set();
@@ -661,6 +749,15 @@ function copySummary() {
   summary.adSignals.forEach(signal => {
     text += `  - ${signal.description}\n`;
   });
+
+  text += `\nAudio Signals:\n`;
+  if (summary.audioSignals.length > 0) {
+    summary.audioSignals.forEach(s => {
+      text += `  - ${s.signal}: ${s.count}x\n`;
+    });
+  } else {
+    text += `  (none)\n`;
+  }
 
   text += `\nInteresting DOM Classes:\n`;
   summary.interestingClasses.slice(0, 10).forEach(cls => {

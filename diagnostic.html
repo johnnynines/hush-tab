@@ -78,6 +78,10 @@
             <span class="stat-value" id="stat-player">0</span>
             <span class="stat-label">Player States</span>
           </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-audio">0</span>
+            <span class="stat-label">Audio Signals</span>
+          </div>
         </div>
       </section>
 
@@ -98,6 +102,7 @@
           <button class="viewer-tab" data-tab="dom">DOM</button>
           <button class="viewer-tab" data-tab="video">Video</button>
           <button class="viewer-tab" data-tab="player">Player</button>
+          <button class="viewer-tab" data-tab="audio">Audio</button>
           <button class="viewer-tab" data-tab="summary">Summary</button>
         </div>
 
@@ -143,6 +148,13 @@
               <span>Player State Snapshots</span>
             </div>
             <div class="log-container" id="player-log-container"></div>
+          </div>
+
+          <div id="audio-viewer" class="viewer-panel">
+            <div class="panel-header">
+              <span>Audio Signals</span>
+            </div>
+            <div class="log-container" id="audio-log-container"></div>
           </div>
 
           <div id="summary-viewer" class="viewer-panel">
