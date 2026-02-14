@@ -35,7 +35,7 @@ const AD_URL_REGEX = /[/&?=]ads?[/&?=.#]|[/&?=]ads?$/i;
 const adState = new Map();
 
 // Time-to-live for ad detection signals (ms)
-const AD_TTL_MS = 15000;
+const AD_TTL_MS = 5000;
 
 // Alarm name for ad state expiry checks
 const AD_CHECK_ALARM_NAME = 'adStateCheck';
