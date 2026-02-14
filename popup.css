@@ -1,4 +1,4 @@
-/* Popup styles for Audio Tab Detector */
+/* Popup styles for Hush Tab */
 
 * {
   margin: 0;
@@ -9,80 +9,91 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   font-size: 14px;
-  width: 400px;
-  min-height: 200px;
+  width: 380px;
+  min-height: 120px;
   background: #f5f5f5;
 }
 
 .container {
   background: white;
-  min-height: 200px;
+  min-height: 120px;
 }
+
+/* --- Compact header --- */
 
 header {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
-  padding: 20px;
-  text-align: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  padding: 10px 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 header h1 {
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 600;
-  margin-bottom: 5px;
+  letter-spacing: 0.3px;
 }
 
-.subtitle {
-  font-size: 12px;
-  opacity: 0.9;
-  margin-bottom: 15px;
+.tab-count {
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 2px 8px;
+  border-radius: 10px;
+  display: none;
 }
 
-/* Diagnostic link */
+.tab-count.visible {
+  display: inline-block;
+}
+
 .diagnostic-link {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
-  text-align: center;
+  margin-top: 6px;
+  text-align: right;
 }
 
 .diagnostic-link a {
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.75);
   text-decoration: none;
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.15);
-  transition: background 0.2s;
+  font-size: 11px;
+  transition: color 0.2s;
 }
 
 .diagnostic-link a:hover {
-  background: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 1);
 }
+
+/* --- Main content area --- */
 
 main {
-  padding: 15px;
+  padding: 10px;
 }
 
-/* Loading state */
+/* --- Loading state --- */
+
 .loading {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-  color: #666;
+  padding: 32px 20px;
+  color: #888;
 }
 
 .spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #667eea;
+  width: 28px;
+  height: 28px;
+  border: 3px solid #eee;
+  border-top: 3px solid #667eea;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 15px;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 10px;
 }
 
 @keyframes spin {
@@ -90,80 +101,236 @@ main {
   100% { transform: rotate(360deg); }
 }
 
-/* No audio state */
+.loading p {
+  font-size: 12px;
+}
+
+/* --- Empty state: CSS-only speaker-off icon --- */
+
 .no-audio {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-  color: #999;
+  padding: 32px 20px;
+  color: #aaa;
 }
 
-.no-audio .icon {
-  font-size: 48px;
-  margin-bottom: 15px;
+.empty-icon {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 12px;
+}
+
+/* Speaker body: small rectangle on the left side */
+.speaker-body {
+  position: absolute;
+  top: 18px;
+  left: 10px;
+  width: 8px;
+  height: 12px;
+  background: #ccc;
+  border-radius: 1px;
+}
+
+/* Speaker cone: triangle shape using borders */
+.speaker-cone {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  width: 0;
+  height: 0;
+  border-top: 12px solid transparent;
+  border-bottom: 12px solid transparent;
+  border-left: 12px solid #ccc;
+}
+
+/* Slash line through the speaker */
+.speaker-slash {
+  position: absolute;
+  top: 4px;
+  left: 23px;
+  width: 2px;
+  height: 40px;
+  background: #ccc;
+  transform: rotate(-45deg);
+  border-radius: 1px;
 }
 
 .no-audio p {
-  font-size: 14px;
+  font-size: 13px;
   text-align: center;
 }
 
-/* Tabs list */
+/* --- Tabs list --- */
+
 .tabs-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
+  max-height: 400px;
+  overflow-y: auto;
 }
+
+.tabs-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tabs-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tabs-list::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+.tabs-list::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+/* --- Individual tab item --- */
 
 .tab-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px;
-  background: #f9f9f9;
+  padding: 8px 10px;
+  background: #fafafa;
   border-radius: 8px;
-  border: 1px solid #e0e0e0;
-  transition: all 0.2s ease;
-}
-
-/* Visual distinction for muted tabs */
-.tab-item.tab-muted {
-  background: #f5f5f5;
-  border-left: 3px solid #999;
-  opacity: 0.85;
+  border: 1px solid #e8e8e8;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .tab-item.tab-unmuted {
-  background: #f0f8ff;
+  background: #f4f7ff;
   border-left: 3px solid #667eea;
 }
 
+.tab-item.tab-muted {
+  background: #f7f7f7;
+  border-left: 3px solid #bbb;
+  opacity: 0.8;
+}
+
 .tab-item:hover {
-  background: #f0f0f0;
-  border-color: #667eea;
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+  background: #eef1fb;
+  border-color: #b0bfff;
+  box-shadow: 0 1px 6px rgba(102, 126, 234, 0.1);
 }
 
 .tab-item.tab-muted:hover {
   opacity: 1;
 }
 
+/* --- Tab info section (clickable) --- */
+
 .tab-info {
   flex: 1;
   min-width: 0;
-  margin-right: 10px;
+  margin-right: 8px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  cursor: pointer;
 }
 
-.status-indicator {
-  font-size: 20px;
+.tab-favicon {
   flex-shrink: 0;
-  line-height: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  object-fit: contain;
 }
+
+/* --- Status indicator (CSS-only badges) --- */
+
+.status-indicator {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+/* Playing: animated sound wave bars */
+.status-playing {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+
+.status-playing .wave-bar {
+  width: 3px;
+  background: #667eea;
+  border-radius: 1px;
+  animation: wave 1s ease-in-out infinite;
+}
+
+.status-playing .wave-bar:nth-child(1) {
+  height: 6px;
+  animation-delay: 0s;
+}
+
+.status-playing .wave-bar:nth-child(2) {
+  height: 10px;
+  animation-delay: 0.15s;
+}
+
+.status-playing .wave-bar:nth-child(3) {
+  height: 4px;
+  animation-delay: 0.3s;
+}
+
+@keyframes wave {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.4); }
+}
+
+/* Muted: small speaker with slash, CSS only */
+.status-muted {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.status-muted .mute-speaker {
+  position: absolute;
+  top: 5px;
+  left: 2px;
+  width: 4px;
+  height: 6px;
+  background: #999;
+  border-radius: 1px;
+}
+
+.status-muted .mute-cone {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid #999;
+}
+
+.status-muted .mute-slash {
+  position: absolute;
+  top: 1px;
+  left: 7px;
+  width: 1.5px;
+  height: 14px;
+  background: #cc4444;
+  transform: rotate(-45deg);
+  border-radius: 1px;
+}
+
+/* --- Tab text --- */
 
 .tab-text {
   flex: 1;
@@ -172,86 +339,216 @@ main {
 
 .tab-title {
   font-weight: 500;
+  font-size: 13px;
   color: #333;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  line-height: 1.3;
 }
 
 .tab-url {
-  font-size: 12px;
+  font-size: 11px;
   color: #999;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1.3;
 }
 
 .muted-label {
-  color: #666;
+  color: #888;
   font-style: italic;
   font-weight: 500;
 }
 
+/* --- Control buttons (icon-only, 28x28) --- */
+
 .tab-controls {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
 .control-btn {
-  width: 32px;
-  height: 32px;
-  border: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #ddd;
   background: white;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
-  border: 1px solid #e0e0e0;
+  transition: all 0.15s ease;
+  position: relative;
 }
 
 .control-btn:hover {
   background: #667eea;
-  transform: scale(1.1);
   border-color: #667eea;
+  transform: scale(1.08);
 }
 
 .control-btn:active,
 .control-btn.clicked {
-  transform: scale(0.95);
+  transform: scale(0.92);
 }
+
+/* --- Mute button icon: speaker shape via CSS --- */
+
+/* Speaker body (small rectangle) */
+.control-btn-mute .btn-icon-speaker {
+  position: absolute;
+  width: 4px;
+  height: 6px;
+  background: #555;
+  border-radius: 1px;
+  left: 7px;
+  top: 11px;
+  transition: background 0.15s;
+}
+
+/* Speaker cone (triangle) */
+.control-btn-mute .btn-icon-cone {
+  position: absolute;
+  left: 10px;
+  top: 9px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 5px solid #555;
+  transition: border-left-color 0.15s;
+}
+
+/* Sound waves (arcs) shown when tab is unmuted -- means clicking will mute */
+.control-btn-mute .btn-icon-wave {
+  position: absolute;
+  right: 4px;
+  top: 8px;
+  width: 5px;
+  height: 12px;
+  border: 1.5px solid transparent;
+  border-right-color: #555;
+  border-radius: 0 50% 50% 0;
+  transition: border-right-color 0.15s;
+}
+
+/* Slash overlay shown when tab is muted -- means clicking will unmute */
+.control-btn-mute .btn-icon-slash {
+  position: absolute;
+  width: 1.5px;
+  height: 18px;
+  background: #cc4444;
+  transform: rotate(-45deg);
+  border-radius: 1px;
+  display: none;
+  transition: background 0.15s;
+}
+
+/* When the tab IS muted, the button shows "unmute" (speaker + slash, no waves) */
+.control-btn-mute.is-muted .btn-icon-wave {
+  display: none;
+}
+
+.control-btn-mute.is-muted .btn-icon-slash {
+  display: block;
+}
+
+/* Hover color inversion for mute button */
+.control-btn-mute:hover .btn-icon-speaker {
+  background: white;
+}
+
+.control-btn-mute:hover .btn-icon-cone {
+  border-left-color: white;
+}
+
+.control-btn-mute:hover .btn-icon-wave {
+  border-right-color: white;
+}
+
+.control-btn-mute:hover .btn-icon-slash {
+  background: white;
+}
+
+/* --- Focus/Go button icon: right-pointing arrow via CSS --- */
+
+.control-btn-focus .btn-icon-arrow-shaft {
+  position: absolute;
+  width: 10px;
+  height: 2px;
+  background: #555;
+  left: 7px;
+  top: 13px;
+  border-radius: 1px;
+  transition: background 0.15s;
+}
+
+.control-btn-focus .btn-icon-arrow-head {
+  position: absolute;
+  right: 6px;
+  top: 9px;
+  width: 7px;
+  height: 7px;
+  border-top: 2px solid #555;
+  border-right: 2px solid #555;
+  transform: rotate(45deg);
+  transition: border-color 0.15s;
+}
+
+/* Hover color inversion for focus button */
+.control-btn-focus:hover .btn-icon-arrow-shaft {
+  background: white;
+}
+
+.control-btn-focus:hover .btn-icon-arrow-head {
+  border-top-color: white;
+  border-right-color: white;
+}
+
+/* --- Ad detection indicator --- */
+
+.ad-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background: #e74c3c;
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  line-height: 1.4;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.tab-item.ad-detected {
+  border-left-color: #e74c3c;
+}
+
+.tab-item.ad-detected.tab-unmuted {
+  background: #fdf2f2;
+}
+
+.tab-item.ad-detected.tab-unmuted:hover {
+  background: #fbe8e8;
+  border-color: #f5a8a8;
+  box-shadow: 0 1px 6px rgba(231, 76, 60, 0.12);
+}
+
+.tab-item.ad-detected.tab-muted {
+  background: #f9f0f0;
+}
+
+/* --- Error state --- */
 
 .error {
   color: #e74c3c;
   text-align: center;
   padding: 20px;
-}
-
-/* Scrollbar styling */
-.tabs-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.tabs-list::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
-}
-
-.tabs-list::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-
-.tabs-list::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
-
-/* Max height for scrolling when many tabs */
-.tabs-list {
-  max-height: 400px;
-  overflow-y: auto;
 }

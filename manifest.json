@@ -7,7 +7,9 @@
     "tabs",
     "storage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "alarms",
+    "webRequest"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -1,20 +1,72 @@
-// Popup script for Hush Tab Diagnostic
+// Popup script for Hush Tab
 // Displays tabs playing audio and allows manual mute control
+
+// Debounce timer reference for coalescing rapid update events
+let refreshTimer = null;
+const DEBOUNCE_MS = 250;
+
+// Default favicon fallback as a data URI (simple globe icon)
+const DEFAULT_FAVICON = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none">' +
+  '<circle cx="8" cy="8" r="7" stroke="#999" stroke-width="1.5" fill="none"/>' +
+  '<ellipse cx="8" cy="8" rx="3" ry="7" stroke="#999" stroke-width="1.2" fill="none"/>' +
+  '<line x1="1" y1="8" x2="15" y2="8" stroke="#999" stroke-width="1.2"/>' +
+  '</svg>'
+);
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadAudioTabs();
   setupEventListeners();
+  setupTabListeners();
 });
 
-// Setup event listeners
+// Setup static event listeners (diagnostic link, etc.)
 function setupEventListeners() {
-  // Diagnostic tool link - open in new tab
   const diagnosticLink = document.getElementById('open-diagnostic');
   if (diagnosticLink) {
     diagnosticLink.addEventListener('click', (e) => {
       e.preventDefault();
       chrome.tabs.create({ url: chrome.runtime.getURL('diagnostic.html') });
     });
+  }
+}
+
+// Setup tab change listeners with debounced refresh
+function setupTabListeners() {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    // Listen for both audible AND mutedInfo changes
+    if (changeInfo.audible !== undefined || changeInfo.mutedInfo !== undefined) {
+      debouncedRefresh();
+    }
+  });
+
+  chrome.tabs.onRemoved.addListener(() => {
+    debouncedRefresh();
+  });
+}
+
+// Debounced refresh to coalesce rapid-fire update events
+function debouncedRefresh() {
+  if (refreshTimer !== null) {
+    clearTimeout(refreshTimer);
+  }
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    loadAudioTabs();
+  }, DEBOUNCE_MS);
+}
+
+// Update the tab count badge in the header
+function updateTabCount(count) {
+  const tabCountEl = document.getElementById('tab-count');
+  if (!tabCountEl) return;
+
+  if (count > 0) {
+    tabCountEl.textContent = count + (count === 1 ? ' tab' : ' tabs');
+    tabCountEl.classList.add('visible');
+  } else {
+    tabCountEl.textContent = '';
+    tabCountEl.classList.remove('visible');
   }
 }
 
@@ -29,48 +81,313 @@ async function loadAudioTabs() {
 
     loading.style.display = 'none';
 
-    if (!response.tabs || response.tabs.length === 0) {
+    if (!response || !response.tabs || response.tabs.length === 0) {
       noAudio.style.display = 'flex';
       tabsList.style.display = 'none';
+      tabsList.innerHTML = '';
+      updateTabCount(0);
     } else {
       noAudio.style.display = 'none';
       tabsList.style.display = 'block';
-      displayTabs(response.tabs);
+      renderTabs(response.tabs);
+      updateTabCount(response.tabs.length);
     }
   } catch (error) {
     console.error('Error loading audio tabs:', error);
-    loading.innerHTML = '<p class="error">Error loading tabs</p>';
+    loading.style.display = 'none';
+    // Show error in the no-audio area as a graceful fallback
+    noAudio.style.display = 'flex';
+    noAudio.innerHTML = '<p class="error">Error loading tabs. Try reopening the popup.</p>';
+    updateTabCount(0);
   }
 }
 
-// Display tabs in the list
-function displayTabs(tabs) {
+// Render tabs with DOM diffing to prevent flicker
+// Reuses existing DOM nodes when possible, only updating changed attributes/content
+function renderTabs(tabs) {
   const tabsList = document.getElementById('tabs-list');
-  tabsList.innerHTML = '';
+  const existingItems = tabsList.querySelectorAll('.tab-item[data-tab-id]');
+  const existingMap = new Map();
 
-  tabs.forEach(tab => {
-    const tabItem = createTabItem(tab);
-    tabsList.appendChild(tabItem);
-  });
+  for (const item of existingItems) {
+    existingMap.set(item.dataset.tabId, item);
+  }
+
+  const incomingIds = new Set(tabs.map((t) => String(t.id)));
+
+  // Remove items that are no longer present
+  for (const [tabId, element] of existingMap) {
+    if (!incomingIds.has(tabId)) {
+      element.remove();
+    }
+  }
+
+  // Update or insert items in order
+  let previousSibling = null;
+  for (const tab of tabs) {
+    const tabIdStr = String(tab.id);
+    const existing = existingMap.get(tabIdStr);
+
+    if (existing) {
+      // Update the existing element in place
+      updateTabItem(existing, tab);
+      // Ensure correct order -- move after previousSibling if needed
+      const expectedNext = previousSibling
+        ? previousSibling.nextElementSibling
+        : tabsList.firstElementChild;
+      if (existing !== expectedNext) {
+        if (previousSibling) {
+          previousSibling.after(existing);
+        } else {
+          tabsList.prepend(existing);
+        }
+      }
+      previousSibling = existing;
+    } else {
+      // Create a new element
+      const newItem = createTabItem(tab);
+      if (previousSibling) {
+        previousSibling.after(newItem);
+      } else {
+        tabsList.prepend(newItem);
+      }
+      previousSibling = newItem;
+    }
+  }
 }
 
-// Create a tab item element
+// Build the CSS-only status indicator for playing state (animated wave bars)
+function buildPlayingIndicator() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'status-indicator';
+  wrapper.title = 'Playing audio';
+
+  const inner = document.createElement('div');
+  inner.className = 'status-playing';
+
+  for (let i = 0; i < 3; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'wave-bar';
+    inner.appendChild(bar);
+  }
+
+  wrapper.appendChild(inner);
+  return wrapper;
+}
+
+// Build the CSS-only status indicator for muted state (speaker with slash)
+function buildMutedIndicator() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'status-indicator';
+  wrapper.title = 'Muted (has audio)';
+
+  const inner = document.createElement('div');
+  inner.className = 'status-muted';
+
+  const speaker = document.createElement('div');
+  speaker.className = 'mute-speaker';
+  const cone = document.createElement('div');
+  cone.className = 'mute-cone';
+  const slash = document.createElement('div');
+  slash.className = 'mute-slash';
+
+  inner.appendChild(speaker);
+  inner.appendChild(cone);
+  inner.appendChild(slash);
+
+  wrapper.appendChild(inner);
+  return wrapper;
+}
+
+// Build the CSS-only mute/unmute button icon elements
+function buildMuteButtonIcons() {
+  const fragment = document.createDocumentFragment();
+
+  const speakerBody = document.createElement('span');
+  speakerBody.className = 'btn-icon-speaker';
+
+  const cone = document.createElement('span');
+  cone.className = 'btn-icon-cone';
+
+  const wave = document.createElement('span');
+  wave.className = 'btn-icon-wave';
+
+  const slash = document.createElement('span');
+  slash.className = 'btn-icon-slash';
+
+  fragment.appendChild(speakerBody);
+  fragment.appendChild(cone);
+  fragment.appendChild(wave);
+  fragment.appendChild(slash);
+
+  return fragment;
+}
+
+// Build the CSS-only focus/go button icon elements
+function buildFocusButtonIcons() {
+  const fragment = document.createDocumentFragment();
+
+  const shaft = document.createElement('span');
+  shaft.className = 'btn-icon-arrow-shaft';
+
+  const head = document.createElement('span');
+  head.className = 'btn-icon-arrow-head';
+
+  fragment.appendChild(shaft);
+  fragment.appendChild(head);
+
+  return fragment;
+}
+
+// Update an existing tab item DOM node with new tab data
+function updateTabItem(element, tab) {
+  const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
+  const adDetected = !!tab.adDetected;
+  let expectedClass = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
+  if (adDetected) {
+    expectedClass += ' ad-detected';
+  }
+
+  if (element.className !== expectedClass) {
+    element.className = expectedClass;
+  }
+
+  // Update ad detection badge
+  const existingAdBadge = element.querySelector('.ad-badge');
+  if (adDetected && !existingAdBadge) {
+    const adBadge = document.createElement('span');
+    adBadge.className = 'ad-badge';
+    adBadge.textContent = 'AD';
+    // Insert after the status indicator
+    const statusEl = element.querySelector('.status-indicator');
+    if (statusEl && statusEl.nextSibling) {
+      statusEl.parentNode.insertBefore(adBadge, statusEl.nextSibling);
+    } else if (statusEl) {
+      statusEl.parentNode.appendChild(adBadge);
+    }
+  } else if (!adDetected && existingAdBadge) {
+    existingAdBadge.remove();
+  }
+
+  // Update favicon
+  const favicon = element.querySelector('.tab-favicon');
+  if (favicon) {
+    const newSrc = tab.favIconUrl || DEFAULT_FAVICON;
+    if (favicon.src !== newSrc) {
+      favicon.src = newSrc;
+    }
+  }
+
+  // Update status indicator (replace entirely if state changed)
+  const status = element.querySelector('.status-indicator');
+  if (status) {
+    const isCurrentlyMuted = status.querySelector('.status-muted') !== null;
+    if (isCurrentlyMuted !== isMuted) {
+      const newIndicator = isMuted ? buildMutedIndicator() : buildPlayingIndicator();
+      status.replaceWith(newIndicator);
+    }
+  }
+
+  // Update title
+  const title = element.querySelector('.tab-title');
+  if (title) {
+    const newTitle = tab.title || 'Untitled';
+    if (title.textContent !== newTitle) {
+      title.textContent = newTitle;
+      title.title = newTitle;
+    }
+  }
+
+  // Update URL and muted label
+  const urlEl = element.querySelector('.tab-url');
+  if (urlEl) {
+    let hostname = tab.url;
+    try {
+      hostname = new URL(tab.url).hostname;
+    } catch (_) {
+      // keep raw url
+    }
+
+    // Update the hostname text node
+    const currentHostname = urlEl.childNodes[0]
+      ? urlEl.childNodes[0].textContent
+      : '';
+    if (currentHostname !== hostname) {
+      urlEl.childNodes[0].textContent = hostname;
+    }
+
+    const existingLabel = urlEl.querySelector('.muted-label');
+    if (isMuted && !existingLabel) {
+      const mutedLabel = document.createElement('span');
+      mutedLabel.className = 'muted-label';
+      mutedLabel.textContent = ' (muted)';
+      urlEl.appendChild(mutedLabel);
+    } else if (!isMuted && existingLabel) {
+      existingLabel.remove();
+    }
+  }
+
+  // Update mute button
+  const muteBtn = element.querySelector('.control-btn-mute');
+  if (muteBtn) {
+    muteBtn.title = isMuted ? 'Unmute this tab' : 'Mute this tab';
+    // Toggle the is-muted class which controls which icon parts are visible
+    if (isMuted) {
+      muteBtn.classList.add('is-muted');
+    } else {
+      muteBtn.classList.remove('is-muted');
+    }
+    // Rebind click handler to capture current state
+    muteBtn.onclick = () => toggleMute(tab.id, isMuted);
+  }
+
+  // Rebind focus handlers with current tab id
+  const info = element.querySelector('.tab-info');
+  if (info) {
+    info.onclick = () => focusTab(tab.id);
+  }
+
+  const focusBtn = element.querySelector('.control-btn-focus');
+  if (focusBtn) {
+    focusBtn.onclick = () => focusTab(tab.id);
+  }
+}
+
+// Create a new tab item element
 function createTabItem(tab) {
   const item = document.createElement('div');
   const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
+  const adDetected = !!tab.adDetected;
 
-  item.className = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
+  let itemClass = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
+  if (adDetected) {
+    itemClass += ' ad-detected';
+  }
+  item.className = itemClass;
+  item.dataset.tabId = String(tab.id);
 
-  // Tab info section
+  // Tab info section (clickable to focus)
   const info = document.createElement('div');
   info.className = 'tab-info';
+  info.onclick = () => focusTab(tab.id);
 
-  // Status indicator
-  const statusIndicator = document.createElement('div');
-  statusIndicator.className = 'status-indicator';
-  statusIndicator.textContent = isMuted ? 'MUTED' : 'PLAYING';
-  statusIndicator.title = isMuted ? 'Muted (has audio)' : 'Playing audio';
+  // Favicon
+  const favicon = document.createElement('img');
+  favicon.className = 'tab-favicon';
+  favicon.width = 16;
+  favicon.height = 16;
+  favicon.src = tab.favIconUrl || DEFAULT_FAVICON;
+  favicon.alt = '';
+  // Fallback if the favicon fails to load
+  favicon.onerror = () => {
+    favicon.src = DEFAULT_FAVICON;
+    favicon.onerror = null; // prevent infinite loop
+  };
 
+  // Status indicator (CSS-only)
+  const statusIndicator = isMuted ? buildMutedIndicator() : buildPlayingIndicator();
+
+  // Text container
   const textContainer = document.createElement('div');
   textContainer.className = 'tab-text';
 
@@ -81,12 +398,15 @@ function createTabItem(tab) {
 
   const url = document.createElement('div');
   url.className = 'tab-url';
+
+  // Hostname text node (allows targeted updates later)
+  let hostname = tab.url;
   try {
-    const urlObj = new URL(tab.url);
-    url.textContent = urlObj.hostname;
-  } catch (e) {
-    url.textContent = tab.url;
+    hostname = new URL(tab.url).hostname;
+  } catch (_) {
+    // keep raw url
   }
+  url.appendChild(document.createTextNode(hostname));
 
   if (isMuted) {
     const mutedLabel = document.createElement('span');
@@ -97,33 +417,43 @@ function createTabItem(tab) {
 
   textContainer.appendChild(title);
   textContainer.appendChild(url);
+
+  info.appendChild(favicon);
   info.appendChild(statusIndicator);
+
+  // Ad detection badge (shown only when ad is detected)
+  if (adDetected) {
+    const adBadge = document.createElement('span');
+    adBadge.className = 'ad-badge';
+    adBadge.textContent = 'AD';
+    info.appendChild(adBadge);
+  }
+
   info.appendChild(textContainer);
 
   // Controls section
   const controls = document.createElement('div');
   controls.className = 'tab-controls';
 
-  // Mute/Unmute button
+  // Mute/Unmute button (icon-only)
   const muteBtn = document.createElement('button');
-  muteBtn.className = 'control-btn';
-  muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+  muteBtn.className = 'control-btn control-btn-mute';
+  if (isMuted) {
+    muteBtn.classList.add('is-muted');
+  }
   muteBtn.title = isMuted ? 'Unmute this tab' : 'Mute this tab';
-  muteBtn.onclick = () => toggleMute(tab.id, isMuted, muteBtn);
+  muteBtn.appendChild(buildMuteButtonIcons());
+  muteBtn.onclick = () => toggleMute(tab.id, isMuted);
 
-  // Focus button
+  // Focus button (icon-only)
   const focusBtn = document.createElement('button');
-  focusBtn.className = 'control-btn';
-  focusBtn.textContent = 'Go';
+  focusBtn.className = 'control-btn control-btn-focus';
   focusBtn.title = 'Switch to this tab';
+  focusBtn.appendChild(buildFocusButtonIcons());
   focusBtn.onclick = () => focusTab(tab.id);
 
   controls.appendChild(muteBtn);
   controls.appendChild(focusBtn);
-
-  // Make the entire item clickable to focus tab
-  info.onclick = () => focusTab(tab.id);
-  info.style.cursor = 'pointer';
 
   item.appendChild(info);
   item.appendChild(controls);
@@ -132,16 +462,12 @@ function createTabItem(tab) {
 }
 
 // Toggle mute state of a tab
-async function toggleMute(tabId, currentlyMuted, button) {
+async function toggleMute(tabId, currentlyMuted) {
   try {
     const action = currentlyMuted ? 'unmuteTab' : 'muteTab';
-    const response = await chrome.runtime.sendMessage({
-      action: action,
-      tabId: tabId
-    });
+    const response = await chrome.runtime.sendMessage({ action, tabId });
 
-    if (response.success) {
-      // Refresh the full list to update styling
+    if (response && response.success) {
       await loadAudioTabs();
     }
   } catch (error) {
@@ -153,29 +479,16 @@ async function toggleMute(tabId, currentlyMuted, button) {
 async function focusTab(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
-
     const response = await chrome.runtime.sendMessage({
       action: 'focusTab',
-      tabId: tabId,
+      tabId,
       windowId: tab.windowId
     });
 
-    if (response.success) {
+    if (response && response.success) {
       window.close();
     }
   } catch (error) {
     console.error('Error focusing tab:', error);
   }
 }
-
-// Listen for tab updates to refresh the list
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.audible !== undefined) {
-    loadAudioTabs();
-  }
-});
-
-// Listen for tab removal to refresh the list
-chrome.tabs.onRemoved.addListener(() => {
-  loadAudioTabs();
-});
