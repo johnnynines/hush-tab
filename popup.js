@@ -15,18 +15,50 @@ const DEFAULT_FAVICON = 'data:image/svg+xml,' + encodeURIComponent(
 );
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadAutoMuteState();
   await loadAudioTabs();
   setupEventListeners();
   setupTabListeners();
 });
 
-// Setup static event listeners (diagnostic link, etc.)
+// Load and initialize the auto-mute toggle state from the background
+async function loadAutoMuteState() {
+  try {
+    const response = await chrome.runtime.sendMessage({ action: 'getAutoMuteEnabled' });
+    const checkbox = document.getElementById('auto-mute-checkbox');
+    if (checkbox && response) {
+      checkbox.checked = response.enabled;
+    }
+  } catch (error) {
+    console.error('Error loading auto-mute state:', error);
+  }
+}
+
+// Setup static event listeners (diagnostic link, auto-mute toggle, etc.)
 function setupEventListeners() {
   const diagnosticLink = document.getElementById('open-diagnostic');
   if (diagnosticLink) {
     diagnosticLink.addEventListener('click', (e) => {
       e.preventDefault();
       chrome.tabs.create({ url: chrome.runtime.getURL('diagnostic.html') });
+    });
+  }
+
+  const autoMuteCheckbox = document.getElementById('auto-mute-checkbox');
+  if (autoMuteCheckbox) {
+    autoMuteCheckbox.addEventListener('change', async (e) => {
+      try {
+        await chrome.runtime.sendMessage({
+          action: 'setAutoMuteEnabled',
+          enabled: e.target.checked
+        });
+        // Refresh the tab list to reflect any auto-mute state changes
+        await loadAudioTabs();
+      } catch (error) {
+        console.error('Error setting auto-mute state:', error);
+        // Revert the checkbox on failure
+        e.target.checked = !e.target.checked;
+      }
     });
   }
 }
@@ -239,14 +271,32 @@ function buildFocusButtonIcons() {
   return fragment;
 }
 
+/**
+ * Compute the expected CSS class string for a tab item.
+ * @param {object} tab - Tab data from background
+ * @returns {string} The class string
+ */
+function computeTabItemClass(tab) {
+  const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
+  const adDetected = !!tab.adDetected;
+  const autoMuted = !!tab.autoMuted;
+
+  let cls = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
+  if (adDetected) {
+    cls += ' ad-detected';
+  }
+  if (autoMuted) {
+    cls += ' auto-muted';
+  }
+  return cls;
+}
+
 // Update an existing tab item DOM node with new tab data
 function updateTabItem(element, tab) {
   const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
   const adDetected = !!tab.adDetected;
-  let expectedClass = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
-  if (adDetected) {
-    expectedClass += ' ad-detected';
-  }
+  const autoMuted = !!tab.autoMuted;
+  const expectedClass = computeTabItemClass(tab);
 
   if (element.className !== expectedClass) {
     element.className = expectedClass;
@@ -267,6 +317,25 @@ function updateTabItem(element, tab) {
     }
   } else if (!adDetected && existingAdBadge) {
     existingAdBadge.remove();
+  }
+
+  // Update auto-muted indicator
+  const existingAutoMuteLabel = element.querySelector('.auto-muted-label');
+  if (autoMuted && !existingAutoMuteLabel) {
+    const autoMuteLabel = document.createElement('span');
+    autoMuteLabel.className = 'auto-muted-label';
+    autoMuteLabel.textContent = 'auto-muted';
+    // Insert after the ad badge or status indicator
+    const adBadge = element.querySelector('.ad-badge');
+    const statusEl = element.querySelector('.status-indicator');
+    const insertAfter = adBadge || statusEl;
+    if (insertAfter && insertAfter.nextSibling) {
+      insertAfter.parentNode.insertBefore(autoMuteLabel, insertAfter.nextSibling);
+    } else if (insertAfter) {
+      insertAfter.parentNode.appendChild(autoMuteLabel);
+    }
+  } else if (!autoMuted && existingAutoMuteLabel) {
+    existingAutoMuteLabel.remove();
   }
 
   // Update favicon
@@ -320,10 +389,16 @@ function updateTabItem(element, tab) {
     if (isMuted && !existingLabel) {
       const mutedLabel = document.createElement('span');
       mutedLabel.className = 'muted-label';
-      mutedLabel.textContent = ' (muted)';
+      mutedLabel.textContent = autoMuted ? ' (auto-muted)' : ' (muted)';
       urlEl.appendChild(mutedLabel);
     } else if (!isMuted && existingLabel) {
       existingLabel.remove();
+    } else if (isMuted && existingLabel) {
+      // Update the label text if auto-muted status changed
+      const expectedText = autoMuted ? ' (auto-muted)' : ' (muted)';
+      if (existingLabel.textContent !== expectedText) {
+        existingLabel.textContent = expectedText;
+      }
     }
   }
 
@@ -358,12 +433,9 @@ function createTabItem(tab) {
   const item = document.createElement('div');
   const isMuted = tab.mutedInfo && tab.mutedInfo.muted;
   const adDetected = !!tab.adDetected;
+  const autoMuted = !!tab.autoMuted;
 
-  let itemClass = isMuted ? 'tab-item tab-muted' : 'tab-item tab-unmuted';
-  if (adDetected) {
-    itemClass += ' ad-detected';
-  }
-  item.className = itemClass;
+  item.className = computeTabItemClass(tab);
   item.dataset.tabId = String(tab.id);
 
   // Tab info section (clickable to focus)
@@ -411,7 +483,7 @@ function createTabItem(tab) {
   if (isMuted) {
     const mutedLabel = document.createElement('span');
     mutedLabel.className = 'muted-label';
-    mutedLabel.textContent = ' (muted)';
+    mutedLabel.textContent = autoMuted ? ' (auto-muted)' : ' (muted)';
     url.appendChild(mutedLabel);
   }
 
@@ -427,6 +499,14 @@ function createTabItem(tab) {
     adBadge.className = 'ad-badge';
     adBadge.textContent = 'AD';
     info.appendChild(adBadge);
+  }
+
+  // Auto-muted indicator label
+  if (autoMuted) {
+    const autoMuteLabel = document.createElement('span');
+    autoMuteLabel.className = 'auto-muted-label';
+    autoMuteLabel.textContent = 'auto-muted';
+    info.appendChild(autoMuteLabel);
   }
 
   info.appendChild(textContainer);

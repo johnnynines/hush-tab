@@ -4,6 +4,31 @@
 // Store tabs with audio state
 let audioTabs = new Map();
 
+// --- Auto-mute state ---
+
+// Tracks tabs that the extension has auto-muted (only unmute these on ad expiry)
+const autoMutedTabs = new Set();
+
+// Tracks tabs where the user manually unmuted during an ad (don't re-mute until fresh ad)
+const userOverrideTabs = new Set();
+
+// Cached in-memory; persisted in chrome.storage.local
+let autoMuteEnabled = false;
+
+// Load autoMuteEnabled from storage on startup
+chrome.storage.local.get({ autoMuteEnabled: false }, (result) => {
+  autoMuteEnabled = result.autoMuteEnabled;
+  console.log(`[Auto-Mute] Loaded autoMuteEnabled = ${autoMuteEnabled}`);
+});
+
+// Keep the cached value in sync when storage changes (e.g., from popup or another context)
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes.autoMuteEnabled) {
+    autoMuteEnabled = changes.autoMuteEnabled.newValue;
+    console.log(`[Auto-Mute] Storage changed, autoMuteEnabled = ${autoMuteEnabled}`);
+  }
+});
+
 // Alarm name constant for periodic scan
 const SCAN_ALARM_NAME = 'periodicTabScan';
 
@@ -24,18 +49,6 @@ const AD_DETECTION_PATTERNS = [
   'media.adbreakstart',
   'ads?ver',
   'adview',
-  'adBreakComplete',
-  'adap',
-  'conviva',
-  'wsg',
-  '/ad/',
-  '/ads/',
-  '?ad=',
-  '&ad=',
-  '=ad&',
-  '=ads&',
-  '?ads=',
-  '&ads=',
   'adsafeprotected',
   'adVideoStart',
   'adnxs'
@@ -45,11 +58,23 @@ const AD_DETECTION_PATTERNS = [
 // Matches 'ad' as a path segment (/ad/, /ad?, /ads/) not as a substring of other words
 const AD_URL_REGEX = /[/&?=]ads?[/&?=.#]|[/&?=]ads?$/i;
 
-// Ad state per tab: tabId -> { lastSignal: timestamp, signalCount: number }
+// Ad state per tab: tabId -> {
+//   lastSignal: number,        — timestamp of most recent signal
+//   firstSignal: number,       — timestamp of first signal in this break
+//   signalCount: number,       — total signals in this break
+//   phase: 'active' | 'grace', — active = signals arriving; grace = waiting to confirm end
+//   graceStartTime: number|null — when we entered grace phase
+// }
 const adState = new Map();
 
-// Time-to-live for ad detection signals (ms)
-const AD_TTL_MS = 5000;
+// How long after the last signal before entering grace phase (ms)
+const AD_SIGNAL_TTL_MS = 20000;
+
+// How long silence must be sustained in grace phase before actually unmuting (ms)
+const UNMUTE_GRACE_MS = 10000;
+
+// Minimum signals required before auto-muting (filters stray single-beacon matches)
+const MIN_SIGNAL_COUNT = 2;
 
 // Alarm name for ad state expiry checks
 const AD_CHECK_ALARM_NAME = 'adStateCheck';
@@ -84,6 +109,7 @@ function checkAdUrl(url) {
 
 /**
  * Record an ad signal for a given tab, updating or creating the adState entry.
+ * If auto-mute is enabled, mutes the tab (respecting user overrides).
  * @param {number} tabId
  */
 function recordAdSignal(tabId) {
@@ -92,23 +118,101 @@ function recordAdSignal(tabId) {
   if (existing) {
     existing.lastSignal = now;
     existing.signalCount += 1;
+
+    // If we were in the grace phase, cancel the pending unmute —
+    // a new signal means the ad break is still ongoing
+    if (existing.phase === 'grace') {
+      existing.phase = 'active';
+      existing.graceStartTime = null;
+      console.log(`[Ad Detection] New signal during grace phase for tab ${tabId} — staying muted`);
+    }
   } else {
-    adState.set(tabId, { lastSignal: now, signalCount: 1 });
+    adState.set(tabId, {
+      lastSignal: now,
+      firstSignal: now,
+      signalCount: 1,
+      phase: 'active',
+      graceStartTime: null
+    });
   }
   console.log(
     `[Ad Detection] Signal recorded for tab ${tabId} (count: ${adState.get(tabId).signalCount})`
   );
+
+  // Auto-mute logic
+  if (autoMuteEnabled) {
+    // If the user manually unmuted during this ad break, respect that choice
+    if (userOverrideTabs.has(tabId)) {
+      return;
+    }
+
+    // If we already auto-muted this tab, nothing to do
+    if (autoMutedTabs.has(tabId)) {
+      return;
+    }
+
+    // Require minimum signal count before muting to avoid false positives
+    if (adState.get(tabId).signalCount < MIN_SIGNAL_COUNT) {
+      return;
+    }
+
+    // Only mute if the tab is not already muted
+    const tabInfo = audioTabs.get(tabId);
+    if (tabInfo && !tabInfo.mutedInfo?.muted) {
+      chrome.tabs.update(tabId, { muted: true }).then(() => {
+        autoMutedTabs.add(tabId);
+        console.log(`[Auto-Mute] Muted tab ${tabId} due to ad signal`);
+      }).catch((error) => {
+        console.error(`[Auto-Mute] Failed to mute tab ${tabId}:`, error);
+      });
+    }
+  }
 }
 
 /**
- * Remove expired ad state entries and clean up tabs that no longer exist.
+ * Check ad state entries using a two-phase approach:
+ * 1. Active phase: signals are arriving. After AD_SIGNAL_TTL_MS of silence, transition to grace.
+ * 2. Grace phase: waiting to confirm ad is truly over. If UNMUTE_GRACE_MS elapses with no
+ *    new signals, the ad break is genuinely over and the tab is unmuted.
+ *    If a new signal arrives during grace, recordAdSignal() flips back to active.
  */
 function checkAdStateExpiry() {
   const now = Date.now();
   for (const [tabId, state] of adState) {
-    if (now - state.lastSignal >= AD_TTL_MS) {
-      adState.delete(tabId);
-      console.log(`[Ad Detection] Ad state expired for tab ${tabId}`);
+    const silenceDuration = now - state.lastSignal;
+
+    if (state.phase === 'active') {
+      // Transition to grace phase when signals have been quiet long enough
+      if (silenceDuration >= AD_SIGNAL_TTL_MS) {
+        state.phase = 'grace';
+        state.graceStartTime = now;
+        console.log(
+          `[Ad Detection] Tab ${tabId} entering grace phase (${state.signalCount} signals over ${now - state.firstSignal}ms)`
+        );
+      }
+      continue;
+    }
+
+    if (state.phase === 'grace') {
+      const graceDuration = now - state.graceStartTime;
+
+      if (graceDuration >= UNMUTE_GRACE_MS) {
+        // Grace period elapsed with no new signals — ad break is genuinely over
+        adState.delete(tabId);
+        console.log(`[Ad Detection] Ad state expired for tab ${tabId} after grace period`);
+
+        // If this tab was auto-muted by us, unmute it now
+        if (autoMutedTabs.has(tabId)) {
+          chrome.tabs.update(tabId, { muted: false }).then(() => {
+            console.log(`[Auto-Mute] Unmuted tab ${tabId} (grace period elapsed)`);
+          }).catch((error) => {
+            console.error(`[Auto-Mute] Failed to unmute tab ${tabId}:`, error);
+          });
+          autoMutedTabs.delete(tabId);
+        }
+        // Always clear user override when ad break ends — fresh start for next ad
+        userOverrideTabs.delete(tabId);
+      }
     }
   }
 }
@@ -293,15 +397,14 @@ async function setupAlarm() {
     });
   }
 
-  // Setup faster alarm for ad state expiry checks (~5 seconds)
+  // Setup alarm for ad state expiry checks
+  // Chrome enforces a minimum of ~30 seconds for periodic alarms in MV3.
+  // With AD_SIGNAL_TTL_MS (20s) + UNMUTE_GRACE_MS (10s) = 30s minimum before unmute,
+  // the ~30s alarm period means worst-case unmute delay is ~60s after last signal.
   const adCheckExisting = await chrome.alarms.get(AD_CHECK_ALARM_NAME);
   if (!adCheckExisting) {
-    // Minimum alarm period in MV3 is ~0.5 min for persisted alarms,
-    // but we use the minimum allowed: 1/12 min (~5 seconds) for development.
-    // In production Chrome enforces a minimum of 0.5 min for periodic alarms.
-    // We use delayInMinutes for a one-shot that re-creates itself.
     chrome.alarms.create(AD_CHECK_ALARM_NAME, {
-      periodInMinutes: 1 / 12 // ~5 seconds (Chrome may enforce 0.5 min minimum)
+      periodInMinutes: 0.5 // 30 seconds (Chrome's enforced minimum)
     });
   }
 }
@@ -345,6 +448,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       console.log(`Audio stopped in tab ${tabId}`);
     }
     updateBadge();
+
+    // Detect user override: if a tab transitions to unmuted and was in autoMutedTabs,
+    // the user manually unmuted it -- respect that choice for this ad break
+    if (
+      changeInfo.mutedInfo &&
+      changeInfo.mutedInfo.muted === false &&
+      autoMutedTabs.has(tabId)
+    ) {
+      autoMutedTabs.delete(tabId);
+      userOverrideTabs.add(tabId);
+      console.log(`[Auto-Mute] User override detected for tab ${tabId} -- will not re-mute until next ad break`);
+    }
   }
 
   // Update tab info (title, url, favicon) if it exists in our map
@@ -374,6 +489,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     adState.delete(tabId);
     console.log(`[Ad Detection] Cleaned up ad state for removed tab ${tabId}`);
   }
+  // Clean up auto-mute tracking for removed tabs
+  if (autoMutedTabs.has(tabId)) {
+    autoMutedTabs.delete(tabId);
+    console.log(`[Auto-Mute] Cleaned up autoMutedTabs for removed tab ${tabId}`);
+  }
+  if (userOverrideTabs.has(tabId)) {
+    userOverrideTabs.delete(tabId);
+    console.log(`[Auto-Mute] Cleaned up userOverrideTabs for removed tab ${tabId}`);
+  }
 });
 
 // Update badge with count of tabs playing audio
@@ -393,19 +517,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Always rescan before responding to guarantee fresh data,
     // especially after service worker restart where audioTabs may be stale
     scanAllTabs().then(() => {
-      const now = Date.now();
       const tabs = Array.from(audioTabs.values()).map(tab => ({
         ...tab,
-        adDetected: adState.has(tab.id) && (now - adState.get(tab.id).lastSignal < AD_TTL_MS)
+        adDetected: adState.has(tab.id),
+        autoMuted: autoMutedTabs.has(tab.id)
       }));
       sendResponse({ tabs });
     }).catch((error) => {
       console.error('Error rescanning for getAudioTabs:', error);
       // Fall back to whatever we have in memory
-      const now = Date.now();
       const tabs = Array.from(audioTabs.values()).map(tab => ({
         ...tab,
-        adDetected: adState.has(tab.id) && (now - adState.get(tab.id).lastSignal < AD_TTL_MS)
+        adDetected: adState.has(tab.id),
+        autoMuted: autoMutedTabs.has(tab.id)
       }));
       sendResponse({ tabs });
     });
@@ -438,6 +562,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).catch((error) => {
       sendResponse({ success: false, error: error.message });
     });
+    return true;
+  }
+
+  if (request.action === 'getAutoMuteEnabled') {
+    sendResponse({ enabled: autoMuteEnabled });
+    return false;
+  }
+
+  if (request.action === 'setAutoMuteEnabled') {
+    const enabled = !!request.enabled;
+    autoMuteEnabled = enabled;
+    chrome.storage.local.set({ autoMuteEnabled: enabled }, () => {
+      console.log(`[Auto-Mute] autoMuteEnabled set to ${enabled}`);
+    });
+
+    // If disabled, immediately unmute all auto-muted tabs and clear tracking Sets
+    if (!enabled) {
+      const unmutePromises = [];
+      for (const tabId of autoMutedTabs) {
+        unmutePromises.push(
+          chrome.tabs.update(tabId, { muted: false }).then(() => {
+            console.log(`[Auto-Mute] Unmuted tab ${tabId} (auto-mute disabled)`);
+          }).catch((error) => {
+            console.error(`[Auto-Mute] Failed to unmute tab ${tabId} on disable:`, error);
+          })
+        );
+      }
+      autoMutedTabs.clear();
+      userOverrideTabs.clear();
+      console.log('[Auto-Mute] Cleared autoMutedTabs and userOverrideTabs');
+
+      Promise.all(unmutePromises).then(() => {
+        sendResponse({ success: true });
+      });
+    } else {
+      sendResponse({ success: true });
+    }
     return true;
   }
 });
