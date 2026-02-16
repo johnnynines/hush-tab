@@ -11,7 +11,6 @@ const SCAN_ALARM_NAME = 'periodicTabScan';
 
 // Patterns to match in URLs, headers, and POST bodies (all lowercase)
 const AD_DETECTION_PATTERNS = [
-  'pagead',
   'pubads',
   'googleads',
   'doubleclick',
@@ -24,7 +23,22 @@ const AD_DETECTION_PATTERNS = [
   'advertisingdetails',
   'media.adbreakstart',
   'ads?ver',
-  'adview'
+  'adview',
+  'adBreakComplete',
+  'adap',
+  'conviva',
+  'wsg',
+  '/ad/',
+  '/ads/',
+  '?ad=',
+  '&ad=',
+  '=ad&',
+  '=ads&',
+  '?ads=',
+  '&ads=',
+  'adsafeprotected',
+  'adVideoStart',
+  'adnxs'
 ];
 
 // URL-specific patterns using regex for short/ambiguous terms
