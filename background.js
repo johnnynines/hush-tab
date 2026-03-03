@@ -6,20 +6,40 @@ let audioTabs = new Map();
 
 // --- Auto-mute state ---
 
-// Tracks tabs that the extension has auto-muted (only unmute these on ad expiry)
+// Tracks tabs that the extension has auto-muted (only unmute these on ad expiry).
+// Persisted to chrome.storage.session so it survives service worker restarts.
 const autoMutedTabs = new Set();
 
 // Tracks tabs where the user manually unmuted during an ad (don't re-mute until fresh ad)
 const userOverrideTabs = new Set();
 
+// Guard to prevent concurrent mute attempts for the same tab
+const mutePending = new Set();
+
 // Cached in-memory; persisted in chrome.storage.local
 let autoMuteEnabled = false;
 
-// Load autoMuteEnabled from storage on startup
+// Load autoMuteEnabled AND autoMutedTabs from storage on startup
 chrome.storage.local.get({ autoMuteEnabled: false }, (result) => {
   autoMuteEnabled = result.autoMuteEnabled;
   console.log(`[Auto-Mute] Loaded autoMuteEnabled = ${autoMuteEnabled}`);
 });
+chrome.storage.session.get({ autoMutedTabIds: [] }, (result) => {
+  for (const tabId of result.autoMutedTabIds) {
+    autoMutedTabs.add(tabId);
+  }
+  if (autoMutedTabs.size > 0) {
+    console.log(`[Auto-Mute] Restored autoMutedTabs from session: [${[...autoMutedTabs]}]`);
+  }
+});
+
+/**
+ * Persist autoMutedTabs to session storage so the set survives
+ * MV3 service worker termination/restart cycles.
+ */
+function persistAutoMutedTabs() {
+  chrome.storage.session.set({ autoMutedTabIds: [...autoMutedTabs] });
+}
 
 // Keep the cached value in sync when storage changes (e.g., from popup or another context)
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -60,9 +80,18 @@ const AD_PATTERNS_TIER2 = [
   'advideostart',
 ];
 
-// Tier 3 (weight 1): Generic URL regex match for 'ad'/'ads' as a path segment.
-// Cannot trigger mute alone — requires corroboration from tier-1 or tier-2 matches.
+// Tier 3: Generic URL regex match for 'ad'/'ads' as a distinct path segment.
+// Base weight is 1; upgraded to 3 if ad-specific query parameters are also present.
 const AD_URL_REGEX = /[/&?=]ads?[/&?=.#]|[/&?=]ads?$/i;
+
+// Query parameter names that indicate an ad-related request when found alongside
+// a tier-3 URL match. Presence of these upgrades the signal from weight 1 → 3.
+const AD_QUERY_PARAMS = new Set([
+  'correlator', 'gdpr', 'adbreak', 'adbreak_id', 'position',
+  'iu', 'cust_params', 'sz', 'ad_type', 'vpos', 'pod',
+  'ad_pod_id', 'ad_pod_position', 'tag_for_child_directed',
+  'ad_rule', 'npa', 'vpmute', 'vpa', 'unviewed_position_start',
+]);
 
 // Ad state per tab: tabId -> {
 //   recentSignals: Array<{timestamp, weight}>, — rolling window for burst detection
@@ -72,6 +101,7 @@ const AD_URL_REGEX = /[/&?=]ads?[/&?=.#]|[/&?=]ads?$/i;
 //     pending   = signals arriving but no burst detected yet (no muting)
 //     confirmed = burst detected, ad is playing (tab muted)
 //     grace     = silence after confirmed, waiting to confirm ad is over
+//   confirmedTime: number|null,  — when phase entered 'confirmed' (for MIN_CONFIRMED_DURATION_MS)
 //   graceStartTime: number|null  — when we entered grace phase
 // }
 const adState = new Map();
@@ -89,13 +119,25 @@ const BURST_WEIGHT_THRESHOLD = 20; // 2x tier-1 (10+10) or 4x tier-2 (5*4)
 // generic URL regex (tier-3, weight 1). Requires more individual signals to confirm,
 // relying on the higher request frequency during actual ad breaks vs sporadic
 // background pings during content playback.
-const BURST_COUNT_THRESHOLD = 5;
+const BURST_COUNT_THRESHOLD = 4;
+
+// Minimum duration (ms) that a tier-3-only burst must span before it can confirm.
+// Content-loading bursts fire many requests in 1-2 seconds and stop. Real ad beacons
+// fire over a longer period (impression, quartile tracking at 25%/50%/75%/100%).
+// This prevents a quick cluster of content requests from triggering a false positive.
+const MIN_TIER3_BURST_DURATION_MS = 6000;
 
 // How long after the last signal before entering grace phase (confirmed → grace)
 const AD_SIGNAL_TTL_MS = 10000;
 
 // How long silence must be sustained in grace phase before actually unmuting
 const UNMUTE_GRACE_MS = 5000;
+
+// Minimum time to stay in confirmed phase after burst detection, even without
+// further signals. Some platforms only fire ad-tech requests at the START of an
+// ad break, then go silent. Without this floor, the tab would unmute mid-ad
+// once the TTL expires. Most ads are 15-30 seconds.
+const MIN_CONFIRMED_DURATION_MS = 20000;
 
 // Maximum ad state duration — force-expire to prevent permanent muting
 // No real ad break lasts longer than this
@@ -123,14 +165,26 @@ function getPatternWeight(text) {
 }
 
 /**
- * Returns weight 1 if the URL contains 'ad' or 'ads' as a distinct path segment.
- * Uses regex to avoid false positives from words like 'download', 'add', 'loading'.
+ * Returns a weight if the URL contains 'ad' or 'ads' as a distinct path segment.
+ * Base weight is 1; upgraded to 3 if the URL also contains ad-specific query
+ * parameters (correlator, adbreak_id, etc.), which strongly indicate an actual
+ * ad request rather than a content URL that happens to contain '/ad/'.
  * @param {string} url
- * @returns {number} 1 if matched, 0 otherwise.
+ * @returns {number} 3 if path + ad query params, 1 if path only, 0 if no match.
  */
 function getUrlWeight(url) {
   if (!url) return 0;
-  return AD_URL_REGEX.test(url) ? 1 : 0;
+  if (!AD_URL_REGEX.test(url)) return 0;
+  // Check for ad-specific query parameters to upgrade the weight
+  try {
+    const params = new URL(url).searchParams;
+    for (const key of params.keys()) {
+      if (AD_QUERY_PARAMS.has(key.toLowerCase())) return 3;
+    }
+  } catch {
+    // Malformed URL — fall through to base weight
+  }
+  return 1;
 }
 
 /**
@@ -156,12 +210,24 @@ function recordAdSignal(tabId, weight) {
 
     const windowWeight = existing.recentSignals.reduce((sum, s) => sum + s.weight, 0);
     const signalCount = existing.recentSignals.length;
-    const burstDetected = windowWeight >= BURST_WEIGHT_THRESHOLD || signalCount >= BURST_COUNT_THRESHOLD;
+    const isTier3Only = windowWeight === signalCount; // all signals are weight 1
+    const burstDuration = signalCount > 1
+      ? now - existing.recentSignals[0].timestamp
+      : 0;
+
+    // Primary path: weight threshold (tier-1/tier-2 signals present)
+    // Secondary path: count threshold with duration gate (tier-3-only signals)
+    // The duration gate prevents quick content-loading bursts from false-triggering.
+    const burstDetected =
+      windowWeight >= BURST_WEIGHT_THRESHOLD ||
+      (signalCount >= BURST_COUNT_THRESHOLD &&
+        (!isTier3Only || burstDuration >= MIN_TIER3_BURST_DURATION_MS));
 
     if (existing.phase === 'pending') {
       // Check if either burst threshold is reached — confirms an actual ad break
       if (burstDetected) {
         existing.phase = 'confirmed';
+        existing.confirmedTime = now;
         console.log(
           `[Ad Detection] Burst confirmed for tab ${tabId} (weight: ${windowWeight}, count: ${signalCount})`
         );
@@ -172,6 +238,7 @@ function recordAdSignal(tabId, weight) {
       // platforms with ongoing ad-tech pings from blocking the unmute.
       if (burstDetected) {
         existing.phase = 'confirmed';
+        existing.confirmedTime = now;
         existing.graceStartTime = null;
         console.log(
           `[Ad Detection] New burst during grace for tab ${tabId} — staying muted (weight: ${windowWeight}, count: ${signalCount})`
@@ -185,6 +252,7 @@ function recordAdSignal(tabId, weight) {
       lastSignal: now,
       firstSignal: now,
       phase: 'pending',
+      confirmedTime: null,
       graceStartTime: null
     });
   }
@@ -192,24 +260,51 @@ function recordAdSignal(tabId, weight) {
   const state = adState.get(tabId);
   const windowWeight = state.recentSignals.reduce((sum, s) => sum + s.weight, 0);
   const windowCount = state.recentSignals.length;
+  const windowDuration = windowCount > 1
+    ? now - state.recentSignals[0].timestamp
+    : 0;
   console.log(
-    `[Ad Detection] Signal for tab ${tabId} (+${weight}, weight: ${windowWeight}, count: ${windowCount}, phase: ${state.phase})`
+    `[Ad Detection] Signal for tab ${tabId} (+${weight}, weight: ${windowWeight}, count: ${windowCount}, duration: ${windowDuration}ms, phase: ${state.phase})`
   );
 
   // Auto-mute only when burst is confirmed (not during pending phase)
   if (autoMuteEnabled && state.phase === 'confirmed') {
     if (userOverrideTabs.has(tabId)) return;
     if (autoMutedTabs.has(tabId)) return;
+    if (mutePending.has(tabId)) return;
 
-    const tabInfo = audioTabs.get(tabId);
-    if (tabInfo && !tabInfo.mutedInfo?.muted) {
-      chrome.tabs.update(tabId, { muted: true }).then(() => {
+    // Use a live chrome.tabs.get() instead of the in-memory audioTabs cache.
+    // audioTabs can be stale or empty after a service worker restart, causing
+    // muting to silently fail. The live check ensures we always have current state.
+    mutePending.add(tabId);
+    chrome.tabs.get(tabId).then((tab) => {
+      // Don't mute if the tab is already muted (respect user's manual mute)
+      if (tab.mutedInfo?.muted) {
+        mutePending.delete(tabId);
+        return;
+      }
+      return chrome.tabs.update(tabId, { muted: true }).then(() => {
         autoMutedTabs.add(tabId);
+        persistAutoMutedTabs();
+        mutePending.delete(tabId);
         console.log(`[Auto-Mute] Muted tab ${tabId} (weight: ${windowWeight}, count: ${windowCount})`);
-      }).catch((error) => {
-        console.error(`[Auto-Mute] Failed to mute tab ${tabId}:`, error);
+        // Ensure tab is tracked in audioTabs for popup display
+        if (!audioTabs.has(tabId)) {
+          audioTabs.set(tabId, {
+            id: tab.id,
+            title: tab.title,
+            url: tab.url,
+            favIconUrl: tab.favIconUrl || '',
+            audible: tab.audible,
+            mutedInfo: { muted: true }
+          });
+          updateBadge();
+        }
       });
-    }
+    }).catch((error) => {
+      mutePending.delete(tabId);
+      console.error(`[Auto-Mute] Failed to mute tab ${tabId}:`, error);
+    });
   }
 }
 
@@ -236,6 +331,7 @@ function checkAdStateExpiry() {
           console.error(`[Auto-Mute] Failed to unmute tab ${tabId}:`, error);
         });
         autoMutedTabs.delete(tabId);
+        persistAutoMutedTabs();
       }
       userOverrideTabs.delete(tabId);
       continue;
@@ -254,12 +350,19 @@ function checkAdStateExpiry() {
     }
 
     if (state.phase === 'confirmed') {
+      // Don't leave confirmed phase until the minimum duration has elapsed.
+      // Some platforms only fire ad signals at the START of an ad break, so
+      // the TTL would expire mid-ad without this floor.
+      const confirmedElapsed = now - state.confirmedTime;
+      if (confirmedElapsed < MIN_CONFIRMED_DURATION_MS) {
+        continue;
+      }
       const silenceDuration = now - state.lastSignal;
       if (silenceDuration >= AD_SIGNAL_TTL_MS) {
         state.phase = 'grace';
         state.graceStartTime = now;
         console.log(
-          `[Ad Detection] Tab ${tabId} entering grace phase (${now - state.firstSignal}ms since first signal)`
+          `[Ad Detection] Tab ${tabId} entering grace phase (${confirmedElapsed}ms since confirmed)`
         );
       }
       continue;
@@ -278,6 +381,7 @@ function checkAdStateExpiry() {
             console.error(`[Auto-Mute] Failed to unmute tab ${tabId}:`, error);
           });
           autoMutedTabs.delete(tabId);
+          persistAutoMutedTabs();
         }
         userOverrideTabs.delete(tabId);
       }
@@ -290,10 +394,8 @@ function checkAdStateExpiry() {
 // Listen for request URLs and POST bodies
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
-    // Early exit: ignore requests not associated with a tab or not in audioTabs
-    if (details.tabId === -1 || !audioTabs.has(details.tabId)) {
-      return;
-    }
+    // Ignore requests not associated with a tab
+    if (details.tabId === -1) return;
 
     // Check the request URL against tiered patterns and URL regex
     let weight = getPatternWeight(details.url);
@@ -360,10 +462,8 @@ chrome.webRequest.onBeforeRequest.addListener(
 // Listen for request headers
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
-    // Early exit: ignore requests not associated with a tab or not in audioTabs
-    if (details.tabId === -1 || !audioTabs.has(details.tabId)) {
-      return;
-    }
+    // Ignore requests not associated with a tab
+    if (details.tabId === -1) return;
 
     if (details.requestHeaders) {
       for (const header of details.requestHeaders) {
@@ -382,9 +482,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 // Listen for P3P response headers on image/gif requests (ad tracking pixels)
 chrome.webRequest.onHeadersReceived.addListener(
   (details) => {
-    if (details.tabId === -1 || !audioTabs.has(details.tabId)) {
-      return;
-    }
+    if (details.tabId === -1) return;
 
     // Check URL for ad patterns (tracking pixel URLs often contain ad domains)
     let w = getPatternWeight(details.url);
@@ -442,6 +540,27 @@ async function scanAllTabs() {
     }
 
     updateBadge();
+
+    // After populating audioTabs, apply muting for any tabs where ad signals
+    // accumulated before the tab was tracked (e.g., after service worker restart
+    // when webRequest events arrive before scanAllTabs completes).
+    if (autoMuteEnabled) {
+      for (const [tabId, state] of adState) {
+        if (state.phase === 'confirmed' &&
+            !autoMutedTabs.has(tabId) && !userOverrideTabs.has(tabId)) {
+          const tabInfo = audioTabs.get(tabId);
+          if (tabInfo && !tabInfo.mutedInfo?.muted) {
+            chrome.tabs.update(tabId, { muted: true }).then(() => {
+              autoMutedTabs.add(tabId);
+              persistAutoMutedTabs();
+              console.log(`[Auto-Mute] Muted tab ${tabId} (deferred after scan)`);
+            }).catch((error) => {
+              console.error(`[Auto-Mute] Failed to mute tab ${tabId}:`, error);
+            });
+          }
+        }
+      }
+    }
   } catch (error) {
     console.error('Error scanning tabs:', error);
   }
@@ -533,6 +652,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       autoMutedTabs.has(tabId)
     ) {
       autoMutedTabs.delete(tabId);
+      persistAutoMutedTabs();
       userOverrideTabs.add(tabId);
       console.log(`[Auto-Mute] User override detected for tab ${tabId} -- will not re-mute until next ad break`);
     }
@@ -575,6 +695,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // Clean up auto-mute tracking for removed tabs
   if (autoMutedTabs.has(tabId)) {
     autoMutedTabs.delete(tabId);
+    persistAutoMutedTabs();
     console.log(`[Auto-Mute] Cleaned up autoMutedTabs for removed tab ${tabId}`);
   }
   if (userOverrideTabs.has(tabId)) {
@@ -673,6 +794,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         );
       }
       autoMutedTabs.clear();
+      persistAutoMutedTabs();
       userOverrideTabs.clear();
       console.log('[Auto-Mute] Cleared autoMutedTabs and userOverrideTabs');
 
