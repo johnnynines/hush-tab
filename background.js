@@ -769,6 +769,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'domAdSignal') {
+    if (sender.tab?.id) {
+      recordAdSignal(sender.tab.id, request.weight || 10);
+    }
+    return false;
+  }
+
   if (request.action === 'getAutoMuteEnabled') {
     sendResponse({ enabled: autoMuteEnabled });
     return false;
